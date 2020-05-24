@@ -4,11 +4,12 @@ from scipy.stats import norm
 import warnings
 import matplotlib.pyplot as plt
 from functools import partial
+import itertools
 
 try:
-    from utils import run_jobs, inds_from_slice2d, load_params, BiDict
+    from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list
 except:
-    from meteocpy.utils import run_jobs, inds_from_slice2d, load_params, BiDict
+    from meteocpy.utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list
 
 
 class _AttributeDict(dict):
@@ -493,8 +494,8 @@ class ApexSensorClass(object):
         return np.ma.sum(weights * inp, axis=-1)
 
     def forward(self, inp_spectrum, inp_wvlens, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
-                snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, run_specs={},
-                *args, **kwargs):
+                snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, run_specs=None,
+                run_specs_inner=None, *args, **kwargs):
         """
 
         :param inp_spectrum: (batches, channels, spectrum), computations are threaded along batches, all spectra in a
@@ -512,7 +513,6 @@ class ApexSensorClass(object):
         binned = run_with_binned
 
         inp_wvlens = np.atleast_2d(inp_wvlens)
-
         # reshape input spectrum
         if len(inp_spectrum.shape) == 2:
             # we assume (batch, wvl)
@@ -538,6 +538,55 @@ class ApexSensorClass(object):
         assert self.check_srfs_initialized(binned=binned)
         assert self.check_inp_spectrum_consistency(inp_spectrum, inp_wvlens, binned=binned)
 
+        # Determine how many batches per job and prepare run_specs
+        if run_specs is None:
+            run_specs = {}
+
+        if 'batches_per_job' not in run_specs:
+            batches_per_job = 1000
+        else:
+            batches_per_job = run_specs['batches_per_job']
+
+        run_specs = {k: v for k, v in run_specs.items() if k != 'batches_per_job'}
+
+        if run_specs_inner is None:
+            run_specs_inner = dict(joblib=False)
+
+        # broadcast, if only one inp_wvls, assume is same inp_wvls for all inp_spectra in batches
+        if len(inp_wvlens) == 1 and len(inp_spectrum) > 1:
+            inp_wvlens = [inp_wvlens[0]] * len(inp_spectrum)
+
+        # broadcast, if only one inp_spectrum assume is same for all inp_wvls
+        if len(inp_wvlens) > 1 and len(inp_spectrum) == 1:
+            inp_spectrum = [inp_spectrum[0]] * len(inp_wvlens)
+
+        # define jobs
+        n_splits = max(len(inp_spectrum) // batches_per_job, 1)
+        job_inp_spectra = chunk_list(inp_spectrum, n_splits)
+        job_inp_wvls = chunk_list(inp_wvlens, n_splits)
+
+        jobs = [partial(self._forward,
+                        inp_spectrum=inp_s, inp_wvlens=inp_w,
+                        binned=binned,
+                        part_covered=part_covered,
+                        tol=tol, pad=pad,
+                        ng4=ng4,
+                        invert=invert, snr=snr, dc=dc, smear=smear,
+                        return_binned=return_binned,
+                        run_specs=run_specs_inner, *args, **kwargs)
+                for inp_s, inp_w in zip(job_inp_spectra, job_inp_wvls)]
+
+        # flatten out job dimension such that we have (batch, channel, band, xdir)
+        res, illu_bands = zip(*run_jobs(jobs, **run_specs))
+        res = list(itertools.chain(*res))
+        illu_bands = list(itertools.chain(*illu_bands))
+
+        return res, illu_bands
+
+    def _forward(self, inp_spectrum, inp_wvlens, binned, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
+                 snr=True, dc=True, smear=True, return_binned=False, run_specs={},
+                 *args, **kwargs):
+
         # ## 0 PREPARATION #############################################################################################
         # determine which bands are illuminated by the input spectrum
         in_illu_bands_per_batch = []
@@ -549,14 +598,6 @@ class ApexSensorClass(object):
                                                                       part_covered=part_covered,
                                                                       binned=binned,
                                                                       to_local=False))
-
-        # broadcast, if only one inp_wvls, assume is same inp_wvls for all inp_spectra in batches
-        if len(inp_wvlens) == 1 and inp_spectrum.shape[0] > 1:
-            in_illu_bands_per_batch = [in_illu_bands_per_batch[0]] * inp_spectrum.shape[0]
-
-        # broadcast, if only one inp_spectrum assume is same for all inp_wvls
-        if len(inp_wvlens) > 1 and inp_spectrum.shape[0] == 1:
-            inp_spectrum = [inp_spectrum] * len(in_illu_bands_per_batch)
 
         # calculate absolute band index
         ext_illu_bands_per_batch = [self.shift_bands_from_local(in_illu_bands, binned=binned)
@@ -700,7 +741,7 @@ class ApexSensorClass(object):
                           res[:, vnir_bands]) * self.dt
 
         # forward
-        adds = np.cumsum(d_rad[:, vnir_bands][:, ::-1], axis=1) - d_rad[:, -1]
+        adds = np.cumsum(d_rad[:, vnir_bands][:, ::-1], axis=1) - d_rad[:, [-1]]
 
         # add smear to DNs
         res += 2 * adds
@@ -719,7 +760,7 @@ class ApexSensorClass(object):
 
         last_edge = 0
         for i, (edge, l) in enumerate(zip(edges, lens)):
-            ret[:, last_edge:edge, :] = res[:, i, :] / l
+            ret[:, last_edge:edge, :] = res[:, [i], :] / l
             last_edge = edge
 
         return ret, new_ext_bands
