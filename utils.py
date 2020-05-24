@@ -196,3 +196,8 @@ class BiDict(dict):
         super().__delitem__(key)
 
 
+def chunk_list(it, size):
+    it = iter(it)
+    return iter(lambda: tuple(itertools.islice(it, size)), ())
+
+
