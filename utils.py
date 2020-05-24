@@ -2,6 +2,7 @@ from joblib import Parallel, delayed
 import numpy as np
 import os
 from scipy.io import loadmat
+import itertools
 
 
 def run_jobs(jobs, joblib=True, n_jobs=4, chunks=1, chunk_callback=None, verbose=False, *args, **kwargs):
@@ -23,6 +24,7 @@ def run_jobs(jobs, joblib=True, n_jobs=4, chunks=1, chunk_callback=None, verbose
                 out.append((chunk_out, ret))
             else:
                 out.append(chunk_out)
+
     else:
         out = []
         # create chunks
@@ -47,6 +49,17 @@ def run_jobs(jobs, joblib=True, n_jobs=4, chunks=1, chunk_callback=None, verbose
                 out.append((chunk_out, ret))
             else:
                 out.append(chunk_out)
+
+    # flatten over chunks
+    if chunk_callback is not None:
+        out, callback_out = zip(*out)
+        out = list(itertools.chain(*out))
+        callback_out = list(itertools.chain(*out))
+        out = (out, callback_out)
+
+    else:
+        out = list(itertools.chain(*out))
+
     return out
 
 
@@ -168,6 +181,9 @@ class BiDict(dict):
             self.inverse.setdefault(value,[]).append(key)
 
     def __setitem__(self, key, value):
+        if not hasattr(self, 'inverse'):
+            self.inverse = {}
+
         if key in self:
             self.inverse[self[key]].remove(key)
         super().__setitem__(key, value)
@@ -178,6 +194,5 @@ class BiDict(dict):
         if self[key] in self.inverse and not self.inverse[self[key]]:
             del self.inverse[self[key]]
         super().__delitem__(key)
-
 
 

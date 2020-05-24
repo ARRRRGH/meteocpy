@@ -3,6 +3,7 @@ import numpy as np
 from scipy.stats import norm
 import warnings
 import matplotlib.pyplot as plt
+from functools import partial
 
 try:
     from utils import run_jobs, inds_from_slice2d, load_params, BiDict
@@ -11,7 +12,12 @@ except:
 
 
 class _AttributeDict(dict):
-    __getattr__ = dict.__getitem__
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError
+
     __setattr__ = dict.__setitem__
 
 
@@ -54,8 +60,8 @@ class ApexSensorClass(object):
         self.cw = cw
         self.ng4_transmission = ng_transmission.flatten()
 
-        # TODO: this is a fix, not correct!!
-        binning_pattern[3] -= 1
+        # TODO: this is a fix!! be sure you understand the binning pattern
+        binning_pattern[0] -= 1
         self.binning_pattern = np.r_[binning_pattern.flatten().astype(np.int), np.ones(self.N_SWIR)].astype(np.int)
 
         # bins lists the bin index for each band, bins.inverse lists the band index for each bin index
@@ -380,6 +386,11 @@ class ApexSensorClass(object):
             # for the support use reduced versions from above
             support = np.stack([lo_per_px, hi_per_px], axis=1).reshape(srfs.shape[0], self.DIM_X_AX, -1)
 
+            if res is not None:
+                warnings.warn('Binning with variable resolution. Provide abs_res not None.')
+                # step_size is the same for all bands in a bin (bc wvls is) so minimum chooses one out of many equal
+                step_size = self.bin_bands(step_size, ext_bands=ext_bands, axis=0, ufunc=np.minimum)
+
             # return ext_bands in binned indices which are the bin inds
             ext_bands = np.unique([self.bins[i] for i in ext_bands])
 
@@ -441,7 +452,7 @@ class ApexSensorClass(object):
             # TODO: how should other parameters be binned?
             self.params.binned.update({'cw': cw, 'fwhm': fwhm})
 
-    def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True, *args, **kwargs):
+    def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True):
         """
 
         :param check_tol: check whether input spectrum fits the SRFs within tolerance tol
@@ -482,7 +493,8 @@ class ApexSensorClass(object):
         return np.ma.sum(weights * inp, axis=-1)
 
     def forward(self, inp_spectrum, inp_wvlens, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
-                snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, *args, **kwargs):
+                snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, run_specs={},
+                *args, **kwargs):
         """
 
         :param inp_spectrum: (batches, channels, spectrum), computations are threaded along batches, all spectra in a
@@ -552,12 +564,13 @@ class ApexSensorClass(object):
 
         # ## 1 CONVOLUTION #############################################################################################
         # convolve all illuminated bands, iterate over batches
-        # TODO: get rid of for loop, exchange with joblib call
-        res = []
+        jobs = []
         for i, in_illu_bands in enumerate(in_illu_bands_per_batch):
             inp_wvl = inp_wvlens[i] if len(inp_wvlens) > 1 else inp_wvlens[0]
-            res.append(self.convolve_srfs(inp_spectrum=inp_spectrum[i], inp_wvlens=inp_wvl, in_bands=in_illu_bands,
-                                          tol=tol, binned=binned, *args, **kwargs))
+            jobs.append(partial(self.convolve_srfs, inp_spectrum=inp_spectrum[i], inp_wvlens=inp_wvl,
+                                in_bands=in_illu_bands, tol=tol, binned=binned))
+
+        res = run_jobs(jobs, **run_specs)
 
         # ## 2 NG TRANSMISSION #########################################################################################
         if ng4:
@@ -566,8 +579,10 @@ class ApexSensorClass(object):
         # ## 3 INVERSION TO DNs ########################################################################################
         if invert:
             # convert to DNs using a custom model defined in self.inversion
-            res = [self.inversion(frame, ext_bands=ext_illu_bands, binned=binned)
-                   for frame, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+            jobs = [partial(self.inversion, frame, ext_bands=ext_illu_bands, binned=binned)
+                            for frame, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+
+            res = run_jobs(jobs, **run_specs)
 
             # multiply times integration times
             res = [np.einsum('ci..., i -> ci...', dns, self.get('integration_times', binned)[ext_illu_bands])
@@ -576,23 +591,27 @@ class ApexSensorClass(object):
         # ## 4 SENSOR NOISE ############################################################################################
         # add SNR noise using a custom model defined in self.snr_model
         if snr:
-            res = [dns + self.snr_model(dns, ext_bands=ext_illu_bands, binned=binned)
-                   for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+            jobs = [partial(self.snr_model, dns, ext_bands=ext_illu_bands, binned=binned)
+                    for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+
+            noise = run_jobs(jobs, **run_specs)
+            res = [r + n for r, n in zip(res, noise)]
 
         # ## 5 DC MODEL ################################################################################################
         # add noisy DC using a custom model defined in self.dc_model
         if dc:
-            res = [dns + self.dc_model(dns, ext_bands=ext_illu_bands, binned=binned)
-                   for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+            jobs = [partial(self.dc_model, dns, ext_bands=ext_illu_bands, binned=binned)
+                    for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+
+            noise = run_jobs(jobs, **run_specs)
+            res = [r + n for r, n in zip(res, noise)]
 
         # ## 6 SMEARING ################################################################################################
         if smear:
-            # if binned need to unbin
-            if binned:
-                res = res
-                raise NotImplementedError
-            else:
-                res = [self.smear(dns, binned=binned) for dns in res]
+            jobs = [partial(self.smear, dns, binned=binned, ext_bands=ext_illu_bands)
+                   for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+
+            res = run_jobs(jobs, **run_specs)
 
         # ## 7 BINNING #################################################################################################
         if return_binned and not binned:
@@ -656,28 +675,58 @@ class ApexSensorClass(object):
              + self.get('dc_coeffs', binned)['offset'][ext_bands]
         return dc + np.random.normal(size=(dn.shape[0], len(ext_bands), self.DIM_X_AX)) * noise_scale
 
-    def smear(self, res, binned=True):
+    def smear(self, res, binned=True, ext_bands=None):
+        # if binned need first to unbin
+        if binned:
+            # TODO: why is smearing only in VNIR?
+            vnir_bands = np.where(ext_bands < self.N_VNIR_BINNED)[0]
+            swir_bands = np.where(ext_bands >= self.N_VNIR_BINNED)[0]
+            unbinned_vnir, ext_vnir_bands_unb = self.unbin(res[:, vnir_bands], ext_bands=ext_bands[vnir_bands])
+
+            if len(swir_bands) == 0:
+                res = unbinned_vnir
+                ext_bands = ext_vnir_bands_unb
+            else:
+                res = np.concatenate([unbinned_vnir, res[:, swir_bands]], axis=1)
+                ext_bands = np.concatenate([ext_vnir_bands_unb, ext_bands[swir_bands]])
+
+        vnir_bands = np.where(ext_bands < self.N_VNIR_UNBINNED)[0]
+        if len(vnir_bands) == 0:
+            return res
+
         # TODO: only vnir is smeared?
         # res = integration_time / dt * drad
+        d_rad = np.einsum('b, cbx -> cbx', 1 / self.get('integration_times', binned=False)[ext_bands[vnir_bands]],
+                          res[:, vnir_bands]) * self.dt
 
-        drad = np.einsum('b, cbxl -> cbxl', 1 / self.integration_times[:self.N_VNIR_UNBINNED],
-                         res[:, :self.N_VNIR_UNBINNED]) * self.dt
         # forward
-        adds = np.cumsum(drad[None, ::-1, ...], axis=1)
-        # backward, reverse clocking
-        adds_bk = np.cumsum(drad[None, ...], axis=1)
+        adds = np.cumsum(d_rad[:, vnir_bands][:, ::-1], axis=1) - d_rad[:, -1]
 
         # add smear to DNs
-        res[:, :self.N_VNIR_UNBINNED] += adds + adds_bk
-
+        res += 2 * adds
+        res = self.bin_bands(res, ext_bands=ext_bands, axis=1)
         return res
 
     def srf_model(self, *args, **kwargs):
         return norm.pdf(*args, **kwargs)
 
+    def unbin(self, res, ext_bands=None):
+        new_ext_bands = np.concatenate([self.bins.inverse[band] for band in ext_bands])
+
+        lens = [len(self.bins.inverse[band]) for band in ext_bands]
+        edges = np.cumsum(lens)
+        ret = np.zeros((res.shape[0], edges[-1], res.shape[2]))
+
+        last_edge = 0
+        for i, (edge, l) in enumerate(zip(edges, lens)):
+            ret[:, last_edge:edge, :] = res[:, i, :] / l
+            last_edge = edge
+
+        return ret, new_ext_bands
 
 # def load_apex(calibration_path, meta_path, *args, **kwargs):
 #     return ApexSensorClass(*args, **kwargs, **load_params(calibration_path, meta_path))
+
 
 def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None, binned_meta=None, unbinned_meta=None,
               swir=None, unbinned_complete=None, *args, **kwargs):
@@ -716,9 +765,11 @@ def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None
 
 
 if __name__ == '__main__':
-    params = load_params('/Users/jim/meteoc/params/binned', '/Users/jim/meteoc/params/meta')
-    ap = ApexSensorClass(**params)
-    ap.initialize_srfs([600, 800], abs_res=1, srf_support_in_sigma=3, zero_out=True, binned=True)
-    res, illu_bands = ap.forward(inp_spectrum=np.array([1000]).reshape(1, -1),
-                                 inp_wvlens=np.arange(800, 801, 1).reshape(-1, 1), pad=False,
-                                 invert=False, snr=False, dc=False, smear=False)
+    ap = load_apex(unbinned_vnir='/Users/jim/meteoc/params/unbinned', binned_vnir_swir='/Users/jim/meteoc/params/binned',
+                   binned_meta='/Users/jim/meteoc/params/binned_meta', vnir_it=27000, swir_it=15000)
+
+    ap.initialize_srfs([500, 510], abs_res=0.05, srf_support_in_sigma=3, zero_out=True, do_bin=True)
+    res, illu_bands = ap.forward(inp_spectrum=np.array([1000000]).reshape(1, 1, -1),
+                                 inp_wvlens=np.arange(500, 510, 0.05).reshape(-1, 1), pad=False, part_covered=True,
+                                 invert=True, snr=True, dc=True, smear=True, return_binned=False,
+                                 run_specs=dict(joblib=False, verbose=False))
