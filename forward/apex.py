@@ -181,8 +181,8 @@ class ApexSensorClass(object):
     def compute_binned_params(self):
         # binn_patt = np.r_[0, self.binning_pattern]
         # cw = np.mean.reduceat(self.get('cw', False), binn_patt)
-        # fwhm = np.max.reduceat(self.get('fwhm', False) + cw, binn_patt) - np.min.reduceat(self.get('fwhm', False) + cw,
-        #                                                                                   binn_patt)
+        # fwhm = np.max.reduceat(self.get('fwhm', False) + cw, binn_patt) - np.min.reduceat(self.get('fwhm', False)
+        #  + cw,binn_patt)
         #
         raise NotImplementedError
 
@@ -193,7 +193,7 @@ class ApexSensorClass(object):
         # make sure bins aren't only partially covered
         orig_ext_bands = ext_bands.copy()
         ext_bands, bin_index = self.extend_ext_bands(ext_bands, return_bin_index=True)
-        #assert np.sum(np.abs(ext_bands - orig_ext_bands)) == 0
+        # assert np.sum(np.abs(ext_bands - orig_ext_bands)) == 0
 
         bins = np.cumsum(np.r_[0, self.binning_pattern])
 
@@ -310,7 +310,7 @@ class ApexSensorClass(object):
 
         # there is an overlapping region, in order to prevent non-contiguous ext_bands
         touched = np.arange(np.min(touched), np.max(touched) + 1)
-        
+
         return touched
 
     def extend_ext_bands(self, ext_bands, return_bin_index=False):
@@ -731,7 +731,8 @@ class ApexSensorClass(object):
                 ext_bands = ext_vnir_bands_unb
             else:
                 res = np.concatenate([unbinned_vnir, res[:, swir_bands]], axis=1)
-                ext_bands = np.concatenate([ext_vnir_bands_unb, ext_bands[swir_bands]])
+                ext_bands = np.concatenate([ext_vnir_bands_unb,
+                                            ext_bands[swir_bands] - self.N_VNIR_BINNED + self.N_VNIR_UNBINNED])
 
         vnir_bands = np.where(ext_bands < self.N_VNIR_UNBINNED)[0]
         if len(vnir_bands) == 0:
@@ -746,7 +747,7 @@ class ApexSensorClass(object):
         adds = np.cumsum(d_rad[:, vnir_bands][:, ::-1], axis=1) - d_rad[:, [-1]]
 
         # add smear to DNs
-        res += 2 * adds
+        res[:, vnir_bands] += 2 * adds
         res = self.bin_bands(res, ext_bands=ext_bands, axis=1)
         return res
 
