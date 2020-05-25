@@ -193,7 +193,7 @@ class ApexSensorClass(object):
         # make sure bins aren't only partially covered
         orig_ext_bands = ext_bands.copy()
         ext_bands, bin_index = self.extend_ext_bands(ext_bands, return_bin_index=True)
-        assert np.sum(np.abs(ext_bands - orig_ext_bands)) == 0
+        #assert np.sum(np.abs(ext_bands - orig_ext_bands)) == 0
 
         bins = np.cumsum(np.r_[0, self.binning_pattern])
 
@@ -310,6 +310,8 @@ class ApexSensorClass(object):
         return touched
 
     def extend_ext_bands(self, ext_bands, return_bin_index=False):
+        # there is an overlapping region, in order to prevent non-contiguous ext_bands
+        ext_bands = np.arange(np.min(ext_bands), np.max(ext_bands) + 1)
         bin_index = np.unique([self.bins[i] for i in ext_bands])
         ext_bands = np.sort(np.unique(np.concatenate([self.bins.inverse[i] for i in bin_index])))
 
