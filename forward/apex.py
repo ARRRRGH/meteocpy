@@ -726,13 +726,20 @@ class ApexSensorClass(object):
             swir_bands = np.where(ext_bands >= self.N_VNIR_BINNED)[0]
             unbinned_vnir, ext_vnir_bands_unb = self.unbin(res[:, vnir_bands], ext_bands=ext_bands[vnir_bands])
 
-            if len(swir_bands) == 0:
+            # there are only vnir bands
+            if len(swir_bands) == 0 and len(vnir_bands) > 0:
                 res = unbinned_vnir
                 ext_bands = ext_vnir_bands_unb
-            else:
+
+            # it's in the overlapping region
+            elif len(swir_bands) > 0 and len(vnir_bands) > 0:
                 res = np.concatenate([unbinned_vnir, res[:, swir_bands]], axis=1)
                 ext_bands = np.concatenate([ext_vnir_bands_unb,
                                             ext_bands[swir_bands] - self.N_VNIR_BINNED + self.N_VNIR_UNBINNED])
+
+            # there are only swir bands
+            else:
+                pass
 
         vnir_bands = np.where(ext_bands < self.N_VNIR_UNBINNED)[0]
         if len(vnir_bands) == 0:
