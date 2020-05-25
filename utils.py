@@ -198,6 +198,6 @@ class BiDict(dict):
 
 def chunk_list(it, size):
     it = iter(it)
-    return iter(lambda: tuple(itertools.islice(it, size)), ())
+    return list(iter(lambda: tuple(itertools.islice(it, size)), ()))
 
 

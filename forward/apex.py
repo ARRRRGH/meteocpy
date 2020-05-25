@@ -34,11 +34,11 @@ class ApexSensorClass(object):
 
     DIM_BANDS_AX_BINNED = N_VNIR_BINNED + N_SWIR
     DIM_BANDS_AX_UNBINNED = N_VNIR_UNBINNED + N_SWIR
-    
+
     _param_keys = ['cw', 'fwhm', 'rad_coeffs', 'snr_coeffs', 'dc_coeffs', 'adc_coeffs', 'ng4_transmission',
                    'integration_times']
-    
-    _model_keys = ['srfs', 'wvls', 'initialized_support', 'srf_support_per_band', 'srf_bands', 'res', 
+
+    _model_keys = ['srfs', 'wvls', 'initialized_support', 'srf_support_per_band', 'srf_bands', 'res',
                    'abs_res', 'start_band']
 
     def __init__(self, cw, fwhm, rad_coeffs, snr_coeffs, dc_coeffs, adc_coeffs,
@@ -183,8 +183,8 @@ class ApexSensorClass(object):
         # cw = np.mean.reduceat(self.get('cw', False), binn_patt)
         # fwhm = np.max.reduceat(self.get('fwhm', False) + cw, binn_patt) - np.min.reduceat(self.get('fwhm', False) + cw,
         #                                                                                   binn_patt)
-        # 
-        raise NotImplementedError    
+        #
+        raise NotImplementedError
 
     def bin_bands(self, unbinned, ext_bands=None, ufunc=np.add, axis=1):
         if ext_bands is None:
@@ -485,6 +485,7 @@ class ApexSensorClass(object):
         inp_spectrum_marr.mask = True
 
         inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
+        print(inds)
         np.put_along_axis(inp_spectrum_marr, inds, inp_spectrum, axis=-1)
         np.put_along_axis(inp_spectrum_marr.mask, inds, False, axis=-1)
 
@@ -561,10 +562,8 @@ class ApexSensorClass(object):
             inp_spectrum = [inp_spectrum[0]] * len(inp_wvlens)
 
         # define jobs
-        n_splits = max(len(inp_spectrum) // batches_per_job, 1)
-        job_inp_spectra = chunk_list(inp_spectrum, n_splits)
-        job_inp_wvls = chunk_list(inp_wvlens, n_splits)
-
+        job_inp_spectra = chunk_list(inp_spectrum, batches_per_job)
+        job_inp_wvls = chunk_list(inp_wvlens, batches_per_job)
         jobs = [partial(self._forward,
                         inp_spectrum=inp_s, inp_wvlens=inp_w,
                         binned=binned,
@@ -686,7 +685,7 @@ class ApexSensorClass(object):
 
         lo_dn_mask = dn < self.get('snr_coeffs', binned)['max_L_low'][:, ext_bands].reshape(1, -1, 1)
         hi_dn_mask = np.logical_not(lo_dn_mask)
-        
+
         lo_frame = self.get('snr_coeffs', binned)['c_low_frame'][ext_bands]
         c_low_frame = np.repeat(lo_frame[None, ...], lo_dn_mask.shape[0], axis=0)
 
