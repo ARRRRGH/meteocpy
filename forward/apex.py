@@ -307,11 +307,13 @@ class ApexSensorClass(object):
 
         if to_local:
             touched = self.shift_bands_to_local(touched, binned=binned)
+
+        # there is an overlapping region, in order to prevent non-contiguous ext_bands
+        touched = np.arange(np.min(touched), np.max(touched) + 1)
+        
         return touched
 
     def extend_ext_bands(self, ext_bands, return_bin_index=False):
-        # there is an overlapping region, in order to prevent non-contiguous ext_bands
-        ext_bands = np.arange(np.min(ext_bands), np.max(ext_bands) + 1)
         bin_index = np.unique([self.bins[i] for i in ext_bands])
         ext_bands = np.sort(np.unique(np.concatenate([self.bins.inverse[i] for i in bin_index])))
 
@@ -487,7 +489,6 @@ class ApexSensorClass(object):
         inp_spectrum_marr.mask = True
 
         inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
-        print(inds)
         np.put_along_axis(inp_spectrum_marr, inds, inp_spectrum, axis=-1)
         np.put_along_axis(inp_spectrum_marr.mask, inds, False, axis=-1)
 
