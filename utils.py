@@ -201,3 +201,11 @@ def chunk_list(it, size):
     return list(iter(lambda: tuple(itertools.islice(it, size)), ()))
 
 
+class _AttributeDict(dict):
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError
+
+    __setattr__ = dict.__setitem__

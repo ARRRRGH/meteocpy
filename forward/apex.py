@@ -2,24 +2,13 @@
 import numpy as np
 from scipy.stats import norm
 import warnings
-import matplotlib.pyplot as plt
 from functools import partial
 import itertools
 
 try:
-    from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list
+    from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
 except:
-    from meteocpy.utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list
-
-
-class _AttributeDict(dict):
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            raise AttributeError
-
-    __setattr__ = dict.__setitem__
+    from meteocpy.utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
 
 
 class ApexSensorClass(object):
@@ -212,7 +201,7 @@ class ApexSensorClass(object):
         return ret
 
     def check_inp_spectrum_consistency(self, inp_spectrum, inp_wvlens, binned=True, tol=1e-12):
-        for inp_wvl, inp_spe in list(zip(inp_wvlens, inp_spectrum)):
+        for inp_wvl, inp_spe in zip(inp_wvlens, inp_spectrum):
 
             # Check resolution / shape of input
             if self.get('abs_res', binned) is None:
@@ -227,8 +216,8 @@ class ApexSensorClass(object):
                                     'resolution %f.') % (inp_wvl[1] - inp_wvl[0], self.get('abs_res', binned)))
 
             # Check support of input is entirely covered by precalculated srfs
-            if inp_wvl[0] < (self.get('initialized_support', binned)[0]
-                                or inp_wvl[-1] > self.get('initialized_support', binned)[-1]):
+            if inp_wvl[0] < self.get('initialized_support', binned)[0] \
+                                or inp_wvl[-1] > self.get('initialized_support', binned)[-1]:
                 raise Exception('You calculated SRFs for (%f, %f). The input spectrum is out of bounds.'
                                 % (self.get('initialized_support', binned)[0],
                                    self.get('initialized_support', binned)[-1]))
@@ -416,8 +405,6 @@ class ApexSensorClass(object):
 
     def initialize_srfs(self, inp_support, res=None, abs_res=None, srf_support_in_sigma=1.0, part_covered=True,
                         zero_out=True, do_bin=True):
-        #self.reset()
-
         binned = self.is_binned
         do_bin = not binned and do_bin
 
