@@ -665,7 +665,8 @@ class ApexSensorClass(object):
         if ext_bands is None:
             ext_bands = slice(None, None)
         #  - self.get('rad_coeffs', binned)['offset'][ext_bands]
-        return (rad) / self.get('rad_coeffs', binned)['gain'][ext_bands]
+        return (rad - self.get('rad_coeffs', binned)['offset'][ext_bands]) \
+                / self.get('rad_coeffs', binned)['gain'][ext_bands]
 
     def snr_model(self, dn, ext_bands=None, binned=True):
         if ext_bands is None:
