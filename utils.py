@@ -3,6 +3,25 @@ import numpy as np
 import os
 from scipy.io import loadmat
 import itertools
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.pyplot as plt
+
+
+def plot_frame(ap, simu, illu_bands, ind, channel=0, vmax=None, vmin=None, figsize=None, binned='binned'):
+    tostr = lambda f: "%.2f" % f
+    wvls = list(map(tostr, ap.params[binned].cw[illu_bands[ind]].mean(axis=1)))
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize)
+
+    im = axs[0].matshow(simu[ind][channel], aspect='auto', vmax=vmax, vmin=vmin)
+    axs[0].set_yticklabels([''] + wvls)
+
+    divider = make_axes_locatable(axs[0])
+    cax = divider.append_axes('right', size='1%', pad=0.05)
+    plt.gcf().colorbar(im, cax=cax)
+
+    axs[1].plot(wvls, simu[ind][channel][:, [250, 500, 750]], '-o')
+    axs[1].set_ylim([np.min(simu[ind][channel][:, [250, 500, 750]]) * 0.9, np.max(simu[ind][channel][:, [250, 500, 750]]) * 1.1])
 
 
 def run_jobs(jobs, joblib=True, n_jobs=4, chunks=1, chunk_callback=None, verbose=False, *args, **kwargs):
