@@ -8,9 +8,10 @@ try:
 except ModuleNotFoundError:
     from forward import apex
 
-
+home = '/home/'
 simulation_name = 'test'
-rang = [700, 1000]
+recompute = True
+rang = [700, 800]
 
 here_path = os.path.dirname(os.path.dirname(__file__))
 save_path = os.path.join(here_path, 'saved_apex_models/apex_%d_%d' % (rang[0], rang[1]))
@@ -18,11 +19,11 @@ save_path = os.path.join(here_path, 'saved_apex_models/apex_%d_%d' % (rang[0], r
 out_path = os.path.join(here_path, 'simulations', simulation_name)
 os.makedirs(out_path, exist_ok=True)
 
-if not os.path.exists(save_path):
-    ap = apex.load_apex(unbinned_vnir='/Users/jim/meteoc/params/unbinned', binned_vnir_swir='/Users/jim/meteoc/params/binned',
-                        binned_meta='/Users/jim/meteoc/params/binned_meta', vnir_it=27000, swir_it=15000)
+if not os.path.exists(save_path) or recompute:
+    ap = apex.load_apex(unbinned_vnir=home+'jim/meteoc/params/unbinned', binned_vnir_swir=home+'/jim/meteoc/params/binned',
+                        binned_meta=home+'jim/meteoc/params/binned_meta', vnir_it=27000, swir_it=15000)
 
-    ap.initialize_srfs(rang, abs_res=0.1, srf_support_in_sigma=3, zero_out=True, do_bin=True)
+    ap.initialize_srfs(rang, res=100, srf_support_in_sigma=1, zero_out=True, do_bin=True)
 
     with open(save_path, 'wb') as f:
         pkl.dump(ap, f)
@@ -30,7 +31,7 @@ else:
     with open(save_path, 'rb') as f:
         ap = pkl.load(f)
 
-calibr = pd.read_csv('/Users/jim/meteoc/data/OGSE_Large sphere radiance.csv')
+calibr = pd.read_csv(home+'jim/meteoc/data/OGSE_Large sphere radiance.csv')
 calibr = calibr.iloc[:-1, :3].iloc[np.where(np.logical_and(calibr.iloc[:, 0] > rang[0],
                                                            calibr.iloc[:, 0] < rang[-1]))][:3]
 inp_spectrum = calibr.iloc[:, 1]
@@ -47,7 +48,7 @@ inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
 config = dict(inp_spectrum=inp_spectrum,
               inp_wvlens=wvls.values.reshape(-1, 1), pad=False, part_covered=True,
               invert=True, snr=True, dc=True, smear=True, return_binned=False,
-              run_specs=dict(joblib=False, verbose=False, batches_per_job=100))
+              run_specs=dict(joblib=False, verbose=False, batches_per_job=100, n_jobs=6))
 
 res, illu_bands = ap.forward(**config)
 

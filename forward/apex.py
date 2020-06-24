@@ -4,6 +4,7 @@ from scipy.stats import norm
 import warnings
 from functools import partial
 import itertools
+from scipy.sparse import csr
 
 try:
     from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
@@ -388,7 +389,7 @@ class ApexSensorClass(object):
             # return ext_bands in binned indices which are the bin inds
             ext_bands = np.unique([self.bins[i] for i in ext_bands])
 
-        srfs = srfs / np.ma.sum(srfs, axis=-1)[..., None] / step_size
+        srfs = srfs / np.sum(srfs, axis=-1)[..., None] / step_size
         return srfs, wvls, ext_bands, support
 
     def initialize_srf_support(self, sigma, binned=True):
@@ -444,6 +445,7 @@ class ApexSensorClass(object):
             # TODO: how should other parameters be binned?
             self.params.binned.update({'cw': cw, 'fwhm': fwhm})
 
+    @profile
     def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True):
         """
 
@@ -461,7 +463,7 @@ class ApexSensorClass(object):
 
         # find closest start_wvl
         start_ind = np.argmin(np.abs(wvls - inp_wvlens[0]), axis=-1)
-        end_ind = start_ind + inp_spectrum.shape[-1]
+        end_ind = np.clip(start_ind + inp_spectrum.shape[-1], a_min=None, a_max=srfs.shape[-1])
 
         if np.any(end_ind > self.get('srfs', binned).shape[-1]):
             warnings.warn('WARNING: the input spectrum overlaps at least one SRF. Choose larger SRF support.')
@@ -472,17 +474,19 @@ class ApexSensorClass(object):
                 raise Exception(('Difference between input spectrum wave length and SRF wave length is larger than'+
                                 'tol=%d') % tol)
 
-        inp_spectrum_marr = np.ma.zeros(tuple([inp_spectrum.shape[0]] + list(srfs.shape[1:])))
-        inp_spectrum_marr.mask = True
+        # shape : (channels, xtrack * bands, wvls)
+        inp_spectrum_arr = np.zeros(tuple([inp_spectrum.shape[0]] + list(srfs.shape[1:])))
+        # inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
+        # np.put_along_axis(inp_spectrum_arr, inds, inp_spectrum, axis=-1)
+        print(inp_spectrum.shape)
+        for i, (s, e) in enumerate(zip(start_ind, end_ind)):
+            inp_spectrum_arr[..., s:e] = inp_spectrum[..., :e-s]
 
-        inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
-        np.put_along_axis(inp_spectrum_marr, inds, inp_spectrum, axis=-1)
-        np.put_along_axis(inp_spectrum_marr.mask, inds, False, axis=-1)
+        return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
 
-        return self.convolve(weights=srfs, inp=inp_spectrum_marr).reshape(-1, len(in_bands), self.DIM_X_AX)
-
+    @profile
     def convolve(self, weights, inp):
-        return np.ma.sum(weights * inp, axis=-1)
+        return np.sum(weights * inp, axis=-1)
 
     def forward(self, inp_spectrum, inp_wvlens, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
                 snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, run_specs=None,
@@ -537,8 +541,7 @@ class ApexSensorClass(object):
             batches_per_job = 1000
         else:
             batches_per_job = run_specs['batches_per_job']
-
-        run_specs = {k: v for k, v in run_specs.items() if k != 'batches_per_job'}
+            run_specs = {k: v for k, v in run_specs.items() if k != 'batches_per_job'}
 
         if run_specs_inner is None:
             run_specs_inner = dict(joblib=False)
@@ -572,6 +575,7 @@ class ApexSensorClass(object):
 
         return res, illu_bands
 
+    @profile
     def _forward(self, inp_spectrum, inp_wvlens, binned, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
                  snr=True, dc=True, smear=True, return_binned=False, run_specs={},
                  *args, **kwargs):
