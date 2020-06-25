@@ -1,15 +1,31 @@
-#import torch
+# import torch
 import numpy as np
 from scipy.stats import norm
 import warnings
 from functools import partial
 import itertools
 from scipy.sparse import csr
+import numba as nb
 
 try:
     from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
 except:
     from meteocpy.utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
+
+
+@nb.jit(nopython=True)
+def convolve_non_aligned(inp, weights, indices):
+    # create return array of shape (channels, px)
+    conv = np.zeros((inp.shape[0], weights.shape[1]))
+    # print(inp.shape, weights.shape, len(indices))
+    for i, ind in enumerate(indices):
+        s, e = ind
+        # allow for broadcasts in px dimension
+        j = min(inp.shape[1] - 1, i)
+        # print((inp[..., j, :e - s] * weights[:, i, s:e]).shape)
+        conv[:, i] = (inp[:, j, :e - s] * weights[:, i, s:e]).reshape(-1)
+
+    return conv
 
 
 class ApexSensorClass(object):
@@ -83,7 +99,6 @@ class ApexSensorClass(object):
         for key, val in [('rad_coeffs', self.rad_coeffs), ('snr_coeffs', self.snr_coeffs),
                          ('dc_coeffs', self.dc_coeffs), ('adc_coeffs', self.adc_coeffs),
                          ('ng4_transmission', self.ng4_transmission)]:
-
             bkey = self.get_binned_type(val)
             self.params[bkey][key] = val
 
@@ -214,18 +229,18 @@ class ApexSensorClass(object):
             else:
                 if len(inp_wvl) > 1 and np.abs(inp_wvl[1] - inp_wvl[0] - self.get('abs_res', binned)) > tol:
                     raise Exception(('Input spectrum has resolution %f. But you calculated SRFs at ' +
-                                    'resolution %f.') % (inp_wvl[1] - inp_wvl[0], self.get('abs_res', binned)))
+                                     'resolution %f.') % (inp_wvl[1] - inp_wvl[0], self.get('abs_res', binned)))
 
             # Check support of input is entirely covered by precalculated srfs
             if inp_wvl[0] < self.get('initialized_support', binned)[0] \
-                                or inp_wvl[-1] > self.get('initialized_support', binned)[-1]:
+                    or inp_wvl[-1] > self.get('initialized_support', binned)[-1]:
                 raise Exception('You calculated SRFs for (%f, %f). The input spectrum is out of bounds.'
                                 % (self.get('initialized_support', binned)[0],
                                    self.get('initialized_support', binned)[-1]))
 
         return True
 
-    def get_2d_ranges(self, ranges, res=None, abs_res=None, shape=None, zero_out=True):
+    def get_2d_ranges(self, ranges, res=None, abs_res=None, exact_wvls=None, shape=None, zero_out=True):
         """
         :param zero_out: if calculates with abs_res, whether to zero out the additional space that might be created
         :param ranges: (:, 2)
@@ -234,10 +249,13 @@ class ApexSensorClass(object):
         :param shape:
         :return: (:, res) or (*shape, res)
         """
-        assert res is not None or abs_res is not None
+        assert res is not None or abs_res is not None or exact_wvls is not None
 
         lo, hi = zip(ranges.transpose())
         lo, hi = lo[0], hi[0]  # 0 because of zip packing
+
+        def is_in_range(p, mins, maxs):
+            return np.logical_and(p > mins.transpose(), p < maxs.transpose())
 
         if res is not None:
             ranges = np.linspace(lo, hi, res).transpose()
@@ -262,6 +280,20 @@ class ApexSensorClass(object):
 
             else:
                 inds = None
+
+        # if exact_wvls is supplied
+        else:
+            @nb.jit(no_python=True)
+            def _iterate_range(wvls, lo, hi):
+                ranges = []
+                for i in range(len(lo)):
+                    ranges.append(exact_wvls[np.logical_and(exact_wvls > lo[i], exact_wvls < hi[i])])
+
+                return ranges
+
+            ranges = _iterate_range(exact_wvls, lo, hi)
+            inds = None
+            support_per_band_ext = None
 
         if shape is not None:
             ranges = ranges.reshape(*shape, -1)
@@ -312,7 +344,8 @@ class ApexSensorClass(object):
 
         return ext_bands
 
-    def compute_srfs(self, support, res=None, abs_res=None, ext_bands=None, zero_out=True, binned=True, do_bin=False):
+    def compute_srfs(self, support, res=None, abs_res=None, exact_wvls=None, ext_bands=None, zero_out=True, binned=True,
+                     do_bin=False):
         """
 
         :param abs_res:
@@ -321,7 +354,7 @@ class ApexSensorClass(object):
         :param ext_bands: only the indices in bands are considered
         :return: (bands, xtrack, res)
         """
-        assert res is not None or abs_res is not None
+        assert res is not None or abs_res is not None or exact_wvls is not None
         do_bin = not binned and do_bin
 
         # TODO: at the moment the function filters ext_bands, this could be extended to pixels
@@ -348,49 +381,63 @@ class ApexSensorClass(object):
         if abs_res is not None:
             wvls, zero_out_inds, ext_support = self.get_2d_ranges(ranges=support_per_px, abs_res=abs_res,
                                                                   zero_out=zero_out)
+        elif res is not None:
+            wvls, zero_out_inds, _ = self.get_2d_ranges(ranges=support_per_px, res=res)
+
+        elif exact_wvls is not None:
+            wvls, _, _ = self.get_2d_ranges(ranges=support_per_px, exact_wvls=exact_wvls)
         else:
-            wvls, zero_out_inds, ext_support = self.get_2d_ranges(ranges=support_per_px, res=res)
+            raise Exception('Must supply abs_res, res or exact_wvls.')
 
         # compute the model for all pixels in selection
-        srfs = self.srf_model(wvls,
-                              loc=self.get('cw', binned)[ext_bands].reshape(-1, 1),
-                              scale=self.get('fwhm', binned)[ext_bands].reshape(-1, 1) * self.FWHM_TO_SIGMA)
+        if abs_res is not None or res is not None:
+            srfs = self.srf_model(wvls,
+                                  loc=self.get('cw', binned)[ext_bands].reshape(-1, 1),
+                                  scale=self.get('fwhm', binned)[ext_bands].reshape(-1, 1) * self.FWHM_TO_SIGMA)
 
-        # reshape pixels to rectangle
-        wvls = wvls.reshape(len(ext_bands), self.DIM_X_AX, -1)
+            # reshape pixels to rectangle
+            wvls = wvls.reshape(len(ext_bands), self.DIM_X_AX, -1)
 
-        # calculate step size for normalization
-        if abs_res is not None:
-            step_size = abs_res
+            # calculate step size for normalization
+            if abs_res is not None:
+                step_size = abs_res
+            else:
+                step_size = (wvls[..., 1] - wvls[..., 0])[..., None]
+
+            # set srfs to zero outside chosen ranges such that we have the same (comparable) coverage everywhere
+            if zero_out_inds is not None:
+                srfs[zero_out_inds] = 0
+
+            srfs = srfs.reshape(len(ext_bands), self.DIM_X_AX, -1)
+            support = support_per_px.reshape(len(ext_bands), self.DIM_X_AX, 2)
+
+            if do_bin:
+                srfs = self.bin_bands(srfs, ext_bands=ext_bands, axis=0)
+
+                # wvls is the same for all bands in a bin so minimum chooses one out of many equal
+                wvls = self.bin_bands(wvls, ext_bands=ext_bands, axis=0, ufunc=np.minimum)
+
+                # for the support use reduced versions from above
+                support = np.stack([lo_per_px, hi_per_px], axis=1).reshape(srfs.shape[0], self.DIM_X_AX, -1)
+
+                if res is not None:
+                    warnings.warn('Binning with variable resolution. Provide abs_res not None.')
+                    # step_size is the same for all bands in a bin (bc wvls is) so minimum chooses one out of many equal
+                    step_size = self.bin_bands(step_size, ext_bands=ext_bands, axis=0, ufunc=np.minimum)
+
+                # return ext_bands in binned indices which are the bin inds
+                ext_bands = np.unique([self.bins[i] for i in ext_bands])
+
+            srfs = srfs / np.sum(srfs, axis=-1)[..., None] / step_size
+            return srfs, wvls, ext_bands, support
+
         else:
-            step_size = (wvls[..., 1] - wvls[...,  0])[..., None]
+            srfs = [self.srf_model(wvls[i],
+                           loc=self.get('cw', binned)[ext_bands[i]],
+                           scale=self.get('fwhm', binned)[ext_bands[i]] * self.FWHM_TO_SIGMA)
+            for i in range(len(ext_bands))]
 
-        # set srfs to zero outside chosen ranges such that we have the same (comparable) coverage everywhere
-        if zero_out_inds is not None:
-            srfs[zero_out_inds] = 0
-
-        srfs = srfs.reshape(len(ext_bands), self.DIM_X_AX, -1)
-        support = support_per_px.reshape(len(ext_bands), self.DIM_X_AX, 2)
-
-        if do_bin:
-            srfs = self.bin_bands(srfs, ext_bands=ext_bands, axis=0)
-
-            # wvls is the same for all bands in a bin so minimum chooses one out of many equal
-            wvls = self.bin_bands(wvls, ext_bands=ext_bands, axis=0, ufunc=np.minimum)
-
-            # for the support use reduced versions from above
-            support = np.stack([lo_per_px, hi_per_px], axis=1).reshape(srfs.shape[0], self.DIM_X_AX, -1)
-
-            if res is not None:
-                warnings.warn('Binning with variable resolution. Provide abs_res not None.')
-                # step_size is the same for all bands in a bin (bc wvls is) so minimum chooses one out of many equal
-                step_size = self.bin_bands(step_size, ext_bands=ext_bands, axis=0, ufunc=np.minimum)
-
-            # return ext_bands in binned indices which are the bin inds
-            ext_bands = np.unique([self.bins[i] for i in ext_bands])
-
-        srfs = srfs / np.sum(srfs, axis=-1)[..., None] / step_size
-        return srfs, wvls, ext_bands, support
+            return srfs, wvls, ext_bands
 
     def initialize_srf_support(self, sigma, binned=True):
         """
@@ -404,8 +451,8 @@ class ApexSensorClass(object):
 
         return np.stack([lo_support, hi_support], axis=2)
 
-    def initialize_srfs(self, inp_support, res=None, abs_res=None, srf_support_in_sigma=1.0, part_covered=True,
-                        zero_out=True, do_bin=True):
+    def initialize_srfs(self, inp_support=None, res=None, abs_res=None, exact_wvls=None, srf_support_in_sigma=1.0,
+                        part_covered=True, zero_out=True, do_bin=True):
         binned = self.is_binned
         do_bin = not binned and do_bin
 
@@ -415,14 +462,16 @@ class ApexSensorClass(object):
         # get min/max of srf_support for each band
         support_per_band = self.get_support_per_band(srf_support)
 
+        if inp_support is None:
+            inp_support = exact_wvls
         # determine which bands are covered by inp_support
         illu_bands = self.get_illuminated_bands(inp_support, part_covered=part_covered,
                                                 support_per_band=support_per_band, to_local=False, binned=binned)
 
         # compute srf for all pixels that are in an illuminated band
         srfs, wvls, illu_bands, srf_support = self.compute_srfs(support=srf_support, ext_bands=illu_bands, res=res,
-                                                                abs_res=abs_res, zero_out=zero_out, binned=binned,
-                                                                do_bin=do_bin)
+                                                                abs_res=abs_res, exact_wvls=exact_wvls, zero_out=zero_out,
+                                                                binned=binned, do_bin=do_bin)
 
         support_per_band = self.get_support_per_band(srf_support)
 
@@ -445,8 +494,9 @@ class ApexSensorClass(object):
             # TODO: how should other parameters be binned?
             self.params.binned.update({'cw': cw, 'fwhm': fwhm})
 
-    @profile
-    def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True):
+    # @profile
+    def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True,
+                      conv_mode='numba'):
         """
 
         :param check_tol: check whether input spectrum fits the SRFs within tolerance tol
@@ -471,26 +521,37 @@ class ApexSensorClass(object):
         if check_tol:
             min_diffs = np.take_along_axis(wvls, start_ind[:, None], axis=-1)
             if np.any(min_diffs < tol):
-                raise Exception(('Difference between input spectrum wave length and SRF wave length is larger than'+
-                                'tol=%d') % tol)
+                raise Exception(('Difference between input spectrum wave length and SRF wave length is larger than' +
+                                 'tol=%d') % tol)
 
+        # THIS IS TOO MEMORY INTENSIVE
         # shape : (channels, xtrack * bands, wvls)
-        inp_spectrum_arr = np.zeros(tuple([inp_spectrum.shape[0]] + list(srfs.shape[1:])))
-        # inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
-        # np.put_along_axis(inp_spectrum_arr, inds, inp_spectrum, axis=-1)
-        print(inp_spectrum.shape)
-        for i, (s, e) in enumerate(zip(start_ind, end_ind)):
-            inp_spectrum_arr[..., s:e] = inp_spectrum[..., :e-s]
+        if conv_mode == 'entire':
+            inp_spectrum_arr = np.zeros(tuple([inp_spectrum.shape[0]] + list(srfs.shape[1:])))
+            inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
+            np.put_along_axis(inp_spectrum_arr, inds, inp_spectrum, axis=-1)
+            return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
 
-        return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
+        # THIS IS TOO SLOW
+        # print(inp_spectrum.shape)
+        # for i, (s, e) in enumerate(zip(start_ind, end_ind)):
+        #     inp_spectrum_arr[..., s:e] = inp_spectrum[..., :e-s]
+        # 
+        # return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
 
-    @profile
-    def convolve(self, weights, inp):
+        # SO USE NUMBA FOR THE CONVOLUTION
+        if conv_mode == 'numba':
+            return convolve_non_aligned(inp=inp_spectrum, weights=srfs,
+                                        indices=np.asarray(list(zip(start_ind, end_ind))))\
+                                        .reshape(-1, len(in_bands), self.DIM_X_AX)
+
+    # @profile
+    def convolve(self, inp, weights):
         return np.sum(weights * inp, axis=-1)
 
     def forward(self, inp_spectrum, inp_wvlens, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
                 snr=True, dc=True, smear=True, run_with_binned=True, return_binned=False, run_specs=None,
-                run_specs_inner=None, *args, **kwargs):
+                run_specs_inner=None, conv_mode='numba', *args, **kwargs):
         """
 
         :param inp_spectrum: (batches, channels, spectrum), computations are threaded along batches, all spectra in a
@@ -520,7 +581,8 @@ class ApexSensorClass(object):
             pass
         elif len(inp_spectrum.shape) == 5:
             # we assume (batch, channel, band, xtrack, wvl)
-            inp_spectrum = inp_spectrum.reshape(inp_spectrum.shape[0], inp_spectrum.shape[1], -1, inp_spectrum.shape[-1])
+            inp_spectrum = inp_spectrum.reshape(inp_spectrum.shape[0], inp_spectrum.shape[1], -1,
+                                                inp_spectrum.shape[-1])
         else:
             raise Exception('Input spectrum has wrong shape.')
 
@@ -565,6 +627,7 @@ class ApexSensorClass(object):
                         ng4=ng4,
                         invert=invert, snr=snr, dc=dc, smear=smear,
                         return_binned=return_binned,
+                        conv_mode=conv_mode,
                         run_specs=run_specs_inner, *args, **kwargs)
                 for inp_s, inp_w in zip(job_inp_spectra, job_inp_wvls)]
 
@@ -575,10 +638,9 @@ class ApexSensorClass(object):
 
         return res, illu_bands
 
-    @profile
+    # @profile
     def _forward(self, inp_spectrum, inp_wvlens, binned, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
-                 snr=True, dc=True, smear=True, return_binned=False, run_specs={},
-                 *args, **kwargs):
+                 snr=True, dc=True, smear=True, return_binned=False, run_specs={}, conv_mode='numba', *args, **kwargs):
 
         # ## 0 PREPARATION #############################################################################################
         # determine which bands are illuminated by the input spectrum
@@ -602,7 +664,7 @@ class ApexSensorClass(object):
         for i, in_illu_bands in enumerate(in_illu_bands_per_batch):
             inp_wvl = inp_wvlens[i] if len(inp_wvlens) > 1 else inp_wvlens[0]
             jobs.append(partial(self.convolve_srfs, inp_spectrum=inp_spectrum[i], inp_wvlens=inp_wvl,
-                                in_bands=in_illu_bands, tol=tol, binned=binned))
+                                in_bands=in_illu_bands, tol=tol, binned=binned, conv_mode=conv_mode))
 
         res = run_jobs(jobs, **run_specs)
 
@@ -614,7 +676,7 @@ class ApexSensorClass(object):
         if invert:
             # convert to DNs using a custom model defined in self.inversion
             jobs = [partial(self.inversion, frame, ext_bands=ext_illu_bands, binned=binned)
-                            for frame, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+                    for frame, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
 
             res = run_jobs(jobs, **run_specs)
 
@@ -643,24 +705,25 @@ class ApexSensorClass(object):
         # ## 6 SMEARING ################################################################################################
         if smear:
             jobs = [partial(self.smear, dns, binned=binned, ext_bands=ext_illu_bands)
-                   for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+                    for dns, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
 
             res = run_jobs(jobs, **run_specs)
 
         # ## 7 BINNING #################################################################################################
         if return_binned and not binned:
-                if self.get('res', binned) is not None:
-                    raise Exception('Binning requires SRFs with absolute resolution (abs_res != None).'
-                                    'Cannot bin SRFs with different spectral sampling (res != None).')
-                else:
-                    raise NotImplementedError
-                    # res = [self.bin_bands(r, ext_illu_bands, axis=1)
-                    #        for r, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
+            if self.get('res', binned) is not None:
+                raise Exception('Binning requires SRFs with absolute resolution (abs_res != None).'
+                                'Cannot bin SRFs with different spectral sampling (res != None).')
+            else:
+                raise NotImplementedError
+                # res = [self.bin_bands(r, ext_illu_bands, axis=1)
+                #        for r, ext_illu_bands in zip(res, ext_illu_bands_per_batch)]
 
         # ## 8 PADDING #################################################################################################
         if pad:
             lo_pad = [max(0, ext_illu_bands[0] - 1) for ext_illu_bands in ext_illu_bands_per_batch]
-            hi_pad = [self.get_px_in_bands_ax(binned) - ext_illu_bands[-1] for ext_illu_bands in ext_illu_bands_per_batch]
+            hi_pad = [self.get_px_in_bands_ax(binned) - ext_illu_bands[-1] for ext_illu_bands in
+                      ext_illu_bands_per_batch]
             res = [np.pad(sm, ((0, 0), (lo, hi), (0, 0))) for sm, lo, hi in zip(res, lo_pad, hi_pad)]
 
         return res, ext_illu_bands_per_batch
@@ -670,7 +733,7 @@ class ApexSensorClass(object):
             ext_bands = slice(None, None)
         #  - self.get('rad_coeffs', binned)['offset'][ext_bands]
         return (rad - self.get('rad_coeffs', binned)['offset'][ext_bands]) \
-                / self.get('rad_coeffs', binned)['gain'][ext_bands]
+               / self.get('rad_coeffs', binned)['gain'][ext_bands]
 
     def snr_model(self, dn, ext_bands=None, binned=True):
         if ext_bands is None:
@@ -767,13 +830,13 @@ class ApexSensorClass(object):
 
         return ret, new_ext_bands
 
+
 # def load_apex(calibration_path, meta_path, *args, **kwargs):
 #     return ApexSensorClass(*args, **kwargs, **load_params(calibration_path, meta_path))
 
 
 def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None, binned_meta=None, unbinned_meta=None,
               swir=None, unbinned_complete=None, *args, **kwargs):
-
     # load binned vnir and swir
     if binned_vnir_swir is not None and unbinned_vnir is None:
         return ApexSensorClass(*args, **kwargs, **load_params(calibration_path=binned_vnir_swir,
@@ -798,7 +861,8 @@ def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None
                                                            axis=0)
 
         params_vnir['rad_coeffs']['offset'] = np.concatenate([params_vnir['rad_coeffs']['offset'],
-                                                              meta['rad_coeffs']['offset'][ApexSensorClass.N_VNIR_BINNED:]],
+                                                              meta['rad_coeffs']['offset'][
+                                                              ApexSensorClass.N_VNIR_BINNED:]],
                                                              axis=0)
         params_vnir.update(meta)
         return ApexSensorClass(*args, **kwargs, **params_vnir)
@@ -808,7 +872,8 @@ def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None
 
 
 if __name__ == '__main__':
-    ap = load_apex(unbinned_vnir='/Users/jim/meteoc/params/unbinned', binned_vnir_swir='/Users/jim/meteoc/params/binned',
+    ap = load_apex(unbinned_vnir='/Users/jim/meteoc/params/unbinned',
+                   binned_vnir_swir='/Users/jim/meteoc/params/binned',
                    binned_meta='/Users/jim/meteoc/params/binned_meta', vnir_it=27000, swir_it=15000)
 
     ap.initialize_srfs([500, 510], abs_res=0.05, srf_support_in_sigma=3, zero_out=True, do_bin=True)
