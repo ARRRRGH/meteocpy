@@ -32,7 +32,7 @@ class ApexSensorClass(object):
                    'abs_res', 'start_band']
 
     def __init__(self, cw, fwhm, rad_coeffs, snr_coeffs, dc_coeffs, adc_coeffs,
-                 binning_pattern, ng_transmission=None, dt=0.006, vnir_it=117, swir_it=199):
+                 binning_pattern, ng_transmission=None, dt=0.006, vnir_it=117, swir_it=199, *args, **kwargs):
 
         assert self.check_coeffs(rad_coeffs, ['gain', 'offset'])
         self.rad_coeffs = rad_coeffs
@@ -445,7 +445,7 @@ class ApexSensorClass(object):
             # TODO: how should other parameters be binned?
             self.params.binned.update({'cw': cw, 'fwhm': fwhm})
 
-    @profile
+    # @profile
     def convolve_srfs(self, inp_spectrum, in_bands, inp_wvlens, tol=0.5, check_tol=True, binned=True):
         """
 
@@ -476,15 +476,24 @@ class ApexSensorClass(object):
 
         # shape : (channels, xtrack * bands, wvls)
         inp_spectrum_arr = np.zeros(tuple([inp_spectrum.shape[0]] + list(srfs.shape[1:])))
-        # inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
+        inds = np.array([range(s, e) for s, e in zip(start_ind, end_ind)])[None, :]  # add channel dimension
+
+        # this is too memory intensive
         # np.put_along_axis(inp_spectrum_arr, inds, inp_spectrum, axis=-1)
-        print(inp_spectrum.shape)
-        for i, (s, e) in enumerate(zip(start_ind, end_ind)):
-            inp_spectrum_arr[..., s:e] = inp_spectrum[..., :e-s]
+
 
         return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
 
-    @profile
+    @np.vectorize
+    def assign_to_np_array(self, arr, index):
+        """
+        
+        :param arr:
+        :param index:
+        :return:
+        """
+
+    # @profile
     def convolve(self, weights, inp):
         return np.sum(weights * inp, axis=-1)
 
@@ -575,7 +584,7 @@ class ApexSensorClass(object):
 
         return res, illu_bands
 
-    @profile
+    # @profile
     def _forward(self, inp_spectrum, inp_wvlens, binned, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
                  snr=True, dc=True, smear=True, return_binned=False, run_specs={},
                  *args, **kwargs):

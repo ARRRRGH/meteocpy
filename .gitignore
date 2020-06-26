@@ -1,0 +1,16 @@
+
+simulations/test/
+
+simulations/
+
+saved_apex_models/
+
+notebooks/
+
+*.pyc
+
+.idea/
+
+.DS_Store
+
+*.iml
