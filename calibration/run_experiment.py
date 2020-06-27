@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     from forward import apex
 
-home = '/home/'
+home = '/Users/'
 simulation_name = 'test'
 recompute = True
 rang = [700, 800]
@@ -41,13 +41,13 @@ intensity_var = np.arange(0.1, 2.5, 0.01)
 # intensity_var = np.array([1])
 
 # create input_spectrum, dirac peak for all wvls in calibr at intensities in intensity_var
-inp_spectrum = pd.concat([inp_spectrum * var for var in intensity_var], 1).values
+inp_spectrum = pd.concat([inp_spectrum * var for var in intensity_var], 1).values * 5e6
 inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
 
 # Simulate forward
 config = dict(inp_spectrum=inp_spectrum,
               inp_wvlens=wvls.values.reshape(-1, 1), pad=False, part_covered=True,
-              invert=True, snr=True, dc=True, smear=True, return_binned=False,
+              invert=True, snr=True, dc=True, smear=True, return_binned=False, conv_mode='numba',
               run_specs=dict(joblib=False, verbose=False, batches_per_job=100, n_jobs=6))
 
 res, illu_bands = ap.forward(**config)
