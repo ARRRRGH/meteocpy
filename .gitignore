@@ -1,0 +1,14 @@
+
+.idea/
+
+__pycache__/
+
+*.iml
+
+saved_apex_models/
+
+simulations/
+
+*.ipynb
+
+.DS_Store
