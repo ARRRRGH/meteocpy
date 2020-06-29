@@ -191,30 +191,62 @@ class ApexSensorClass(object):
         #
         raise NotImplementedError
 
-    def bin_bands(self, unbinned, ext_bands=None, ufunc=np.add, axis=1):
+    def bin_bands(self, unbinned, wvls=None, ext_bands=None, ufunc=np.add, axis=1):
         if ext_bands is None:
             ext_bands = np.arange(self.DIM_BANDS_AX_UNBINNED)
 
         # make sure bins aren't only partially covered
-        orig_ext_bands = ext_bands.copy()
         ext_bands, bin_index = self.extend_ext_bands(ext_bands, return_bin_index=True)
-        # assert np.sum(np.abs(ext_bands - orig_ext_bands)) == 0
-
         bins = np.cumsum(np.r_[0, self.binning_pattern])
 
-        # if the next index would be larger than unbinned.shape[axis] reduce till end
-        end_index = bins[bin_index[-1] + 1]
-        if end_index >= unbinned.shape[axis]:
-            bins = bins[bin_index] - ext_bands[0]  # shift index to local coordinate system
-            ret = ufunc.reduceat(unbinned, bins, axis=axis)
+        if not type(unbinned) is list:
+            # if the next index would be larger than unbinned.shape[axis] reduce till end
+            end_index = bins[bin_index[-1] + 1]
+            if end_index >= unbinned.shape[axis]:
+                bins = bins[bin_index] - ext_bands[0]  # shift index to local coordinate system
+                ret = ufunc.reduceat(unbinned, bins, axis=axis)
 
-        # need to put a break to reducer at end, exclude the added element
+            # need to put a break to reducer at end, exclude the added element
+            else:
+                bins = np.r_[bins[bin_index], end_index] - ext_bands[0]  # shift index to local coordinate system
+                ret = ufunc.reduceat(unbinned, bins, axis=axis)[tuple([slice(None, None)
+                                                                       if ax != axis else slice(None, -1)
+                                                                       for ax in range(len(unbinned.shape))])]
+
+            return ret
+
         else:
-            bins = np.r_[bins[bin_index], end_index] - ext_bands[0]  # shift index to local coordinate system
-            ret = ufunc.reduceat(unbinned, bins, axis=axis)[tuple([slice(None, None)
-                                                                   if ax != axis else slice(None, -1)
-                                                                   for ax in range(len(unbinned.shape))])]
-        return ret
+
+            def _list_iter(lis, chunk_ends):
+                for i, ce in enumerate(chunk_ends):
+                    # this works bc we made sure to include all bands of a bin
+                    end_index = min(chunk_ends[i+1], len(lis))
+
+                    yield lis[chunk_ends[i]: end_index]
+
+            ret_srfs = []
+            ret_wvls = []
+            for chunk in _list_iter(list(zip(unbinned, wvls)), self.binning_pattern[ext_bands]):
+                print(len(unbinned), len(wvls))
+                srfss, wvlss = zip(*chunk)
+
+                # wvls for each band are at most shifted, not changed
+                shifts = np.array([0] + [np.where(wvlss[0] == wvlsi[0])[0][0] for wvlsi in wvlss[1:]])
+                lens = np.array([len(wvlsi) for wvlsi in wvlss])
+
+                # initialized binned
+                max_extent = np.max(shifts + lens)
+                binned_chunk = np.zeros(max_extent)
+                binned_wvls = []
+
+                for i, unbinn in enumerate(chunk):
+                    binned_chunk[shifts[i]:shifts[i] + lens[i]] += unbinn
+                    binned_wvls.append(wvlss[i])
+
+                ret_wvls.append(np.unique(binned_wvls).sort())
+                ret_srfs.append(binned_chunk)
+
+            return ret_srfs, ret_wvls
 
     def check_inp_spectrum_consistency(self, inp_spectrum, inp_wvlens, binned=True, tol=1e-12):
         for inp_wvl, inp_spe in zip(inp_wvlens, inp_spectrum):
@@ -254,9 +286,6 @@ class ApexSensorClass(object):
         lo, hi = zip(ranges.transpose())
         lo, hi = lo[0], hi[0]  # 0 because of zip packing
 
-        def is_in_range(p, mins, maxs):
-            return np.logical_and(p > mins.transpose(), p < maxs.transpose())
-
         if res is not None:
             ranges = np.linspace(lo, hi, res).transpose()
             inds = None
@@ -283,15 +312,14 @@ class ApexSensorClass(object):
 
         # if exact_wvls is supplied
         else:
-            @nb.jit(no_python=True)
+            @nb.jit(nopython=True)
             def _iterate_range(wvls, lo, hi):
                 ranges = []
                 for i in range(len(lo)):
-                    ranges.append(exact_wvls[np.logical_and(exact_wvls > lo[i], exact_wvls < hi[i])])
+                    ranges.append(exact_wvls[np.logical_and(wvls > lo[i], wvls < hi[i])])
 
                 return ranges
-
-            ranges = _iterate_range(exact_wvls, lo, hi)
+            ranges = np.array(_iterate_range(exact_wvls, lo, hi))  # .astype(np.float)
             inds = None
             support_per_band_ext = None
 
@@ -386,10 +414,14 @@ class ApexSensorClass(object):
 
         elif exact_wvls is not None:
             wvls, _, _ = self.get_2d_ranges(ranges=support_per_px, exact_wvls=exact_wvls)
+            # wvls per band
+            wvls = wvls.reshape(len(ext_bands), -1)
+
         else:
             raise Exception('Must supply abs_res, res or exact_wvls.')
 
         # compute the model for all pixels in selection
+        # IF USING RES ARGUMENT
         if abs_res is not None or res is not None:
             srfs = self.srf_model(wvls,
                                   loc=self.get('cw', binned)[ext_bands].reshape(-1, 1),
@@ -428,16 +460,30 @@ class ApexSensorClass(object):
                 # return ext_bands in binned indices which are the bin inds
                 ext_bands = np.unique([self.bins[i] for i in ext_bands])
 
-            srfs = srfs / np.sum(srfs, axis=-1)[..., None] / step_size
+            srfs = srfs / np.sum(srfs, axis=-1)[..., None]  # / step_size
+            srfs = srfs.reshape(1, *srfs.shape)  # add channel dimension
+
             return srfs, wvls, ext_bands, support
 
+        # IF USING EXACT WVLS ARGUMENT
         else:
-            srfs = [self.srf_model(wvls[i],
-                           loc=self.get('cw', binned)[ext_bands[i]],
-                           scale=self.get('fwhm', binned)[ext_bands[i]] * self.FWHM_TO_SIGMA)
-            for i in range(len(ext_bands))]
+            print(self.get('fwhm', binned).shape, wvls.shape)
+            srfs = [[self.srf_model(wvls[i, j],
+                                    loc=self.get('cw', binned)[ext_bands[i], j],
+                                    scale=self.get('fwhm', binned)[ext_bands[i], j] * self.FWHM_TO_SIGMA)
+                    for j in range(self.DIM_X_AX)]
+                    for i in range(len(ext_bands))]
 
-            return srfs, wvls, ext_bands
+            if do_bin:
+                srfs, wvls = self.bin_bands(srfs, wvls=wvls, ext_bands=ext_bands, axis=0)
+
+                # for the support use reduced versions from above
+                support = np.stack([lo_per_px, hi_per_px], axis=1).reshape(srfs.shape[0], self.DIM_X_AX, -1)
+
+            srfs = [srf / np.sum(srf, axis=-1)[..., None] for srf in srfs]  # / step_size
+            srfs = [srf.reshape(1, *srf.shape) for srf in srfs]  # add channel dimension
+
+            return srfs, wvls, ext_bands, support
 
     def initialize_srf_support(self, sigma, binned=True):
         """
@@ -477,7 +523,7 @@ class ApexSensorClass(object):
 
         # save model to correct binned/unbinned
         bkey = self.is_binned_as_str(binned or do_bin)
-        self.model[bkey] = _AttributeDict({'srfs': srfs.reshape(1, *srfs.shape),  # add a channel dimension
+        self.model[bkey] = _AttributeDict({'srfs': srfs,
                                            'wvls': wvls,
                                            'initialized_support': inp_support,
                                            'srf_support_per_band': support_per_band,
