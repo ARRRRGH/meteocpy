@@ -1,10 +1,12 @@
 #import torch
+import sys
+sys.path.append('/Users/jim')
+
 import numpy as np
 from scipy.stats import norm
 import warnings
 from functools import partial
 import itertools
-from scipy.sparse import csr
 
 try:
     from utils import run_jobs, inds_from_slice2d, load_params, BiDict, chunk_list, _AttributeDict
@@ -480,7 +482,6 @@ class ApexSensorClass(object):
 
         # this is too memory intensive
         # np.put_along_axis(inp_spectrum_arr, inds, inp_spectrum, axis=-1)
-
 
         return self.convolve(weights=srfs, inp=inp_spectrum_arr).reshape(-1, len(in_bands), self.DIM_X_AX)
 
