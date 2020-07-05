@@ -48,7 +48,7 @@ def gaussian_w_off(xdata, *params, size=10):
 
 # fit srf model for each simulated pixel
 srf_model = gaussian_w_off
-channel = 12
+channel = -1
 for band in band_dict.keys():
 
     # run in a loop to reduce number of simultaneously fitted params

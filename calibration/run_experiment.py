@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import BarycentricInterpolator
+import scipy.signal as sgn
 
 try:
     from meteocpy.forward import apex
@@ -36,8 +37,15 @@ calibr = pd.read_csv(home+'jim/meteoc/data/OGSE_Large sphere radiance.csv')
 calibr = calibr.iloc[:-1, :3].iloc[np.where(np.logical_and(calibr.iloc[:, 0] > rang[0],
                                                            calibr.iloc[:, 0] < rang[-1]))]#[:30]
 
-inp_spectrum = calibr.iloc[:, 1]
-wvls = calibr.iloc[:, 0]
+
+inp_spectrum = calibr.iloc[:, 1].values
+wvls = calibr.iloc[:, 0].values
+
+# resample
+n = 3
+wvls_ = np.linspace(wvls[0], wvls[-1], int(wvls[-1] - wvls[0]) * n)  # get n samples per nm
+inp_spectrum = BarycentricInterpolator(wvls, inp_spectrum)(wvls_)
+wvls = wvls_
 
 intensity_var = np.arange(0.1, 2.5, 1)
 # intensity_var = np.array([1])
@@ -48,7 +56,7 @@ inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
 
 # Simulate forward
 config = dict(inp_spectrum=inp_spectrum,
-              inp_wvlens=wvls.values.reshape(-1, 1), pad=False, part_covered=True,
+              inp_wvlens=wvls.reshape(-1, 1), pad=False, part_covered=True,
               invert=True, snr=True, dc=True, smear=True, return_binned=False, conv_mode='numba',
               run_specs=dict(joblib=False, verbose=False, batches_per_job=100, n_jobs=6))
 
