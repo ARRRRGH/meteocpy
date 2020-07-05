@@ -2,13 +2,14 @@ import pickle as pkl
 import os
 import numpy as np
 import pandas as pd
+from scipy.interpolate import BarycentricInterpolator
 
 try:
     from meteocpy.forward import apex
 except ModuleNotFoundError:
     from forward import apex
 
-home = '/home/'
+home = '/Users/'
 simulation_name = 'test'
 recompute = False
 rang = [700, 800]
@@ -42,7 +43,7 @@ intensity_var = np.arange(0.1, 2.5, 1)
 # intensity_var = np.array([1])
 
 # create input_spectrum, dirac peak for all wvls in calibr at intensities in intensity_var
-inp_spectrum = pd.concat([inp_spectrum * var for var in intensity_var], 1).values
+inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 5e6
 inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
 
 # Simulate forward

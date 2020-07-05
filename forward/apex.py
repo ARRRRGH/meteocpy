@@ -48,7 +48,7 @@ class ApexSensorClass(object):
                    'abs_res', 'start_band']
 
     def __init__(self, cw, fwhm, rad_coeffs, snr_coeffs, dc_coeffs, adc_coeffs,
-                 binning_pattern, ng_transmission=None, dt=0.006, vnir_it=117, swir_it=199):
+                 binning_pattern, ng_transmission=None, dt=0.006, vnir_it=117, swir_it=199, *args, **kwargs):
 
         assert self.check_coeffs(rad_coeffs, ['gain', 'offset'])
         self.rad_coeffs = rad_coeffs
