@@ -12,8 +12,9 @@ except ModuleNotFoundError:
 
 home = '/Users/'
 simulation_name = 'test'
-recompute = False
+recompute = True
 rang = [700, 800]
+abs_res = 0.01
 
 here_path = os.path.dirname(os.path.dirname(__file__))
 save_path = os.path.join(here_path, 'saved_apex_models/apex_%d_%d' % (rang[0], rang[1]))
@@ -25,7 +26,7 @@ if not os.path.exists(save_path) or recompute:
     ap = apex.load_apex(unbinned_vnir=home+'jim/meteoc/params/unbinned', binned_vnir_swir=home+'/jim/meteoc/params/binned',
                         binned_meta=home+'jim/meteoc/params/binned_meta', vnir_it=27000, swir_it=15000)
 
-    ap.initialize_srfs(rang, abs_res=0.01, srf_support_in_sigma=3, zero_out=True, do_bin=True)
+    ap.initialize_srfs(rang, abs_res=abs_res, srf_support_in_sigma=3, zero_out=True, do_bin=True)
 
     with open(save_path, 'wb') as f:
         pkl.dump(ap, f)
@@ -42,16 +43,16 @@ inp_spectrum = calibr.iloc[:, 1].values
 wvls = calibr.iloc[:, 0].values
 
 # resample
-n = 3
+n = 1
 wvls_ = np.linspace(wvls[0], wvls[-1], int(wvls[-1] - wvls[0]) * n)  # get n samples per nm
 inp_spectrum = BarycentricInterpolator(wvls, inp_spectrum)(wvls_)
 wvls = wvls_
 
-intensity_var = np.arange(0.1, 2.5, 1)
+intensity_var = np.arange(0.6, 2.5, 1)
 # intensity_var = np.array([1])
 
 # create input_spectrum, dirac peak for all wvls in calibr at intensities in intensity_var
-inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 5e6
+inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 5e6 * abs_res
 inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
 
 # Simulate forward

@@ -44,17 +44,16 @@ def gather_simulations(frames, illu_bands, inp_wvls):
 
     # Iterate over all bands such that band_dict[i] = [band_at_wvl1, ..., band_at_wvln]
     # and wvl_dict = [wvl1, ..., wvln]
-    for i, (ill_bands, frame) in enumerate(zip(illu_bands, frames)):
-
+    for i, (ill_bands, frame, wvl) in enumerate(zip(illu_bands, frames, inp_wvls)):
         for j, ib in enumerate(ill_bands):
 
             if ib not in band_dict:
                 band_dict[ib] = [frame[:, j, :]]
-                wvl_dict[ib] = [inp_wvls[i]]
+                wvl_dict[ib] = [wvl]
 
             else:
                 band_dict[ib].append(frame[:, j, :])
-                wvl_dict[ib].append(inp_wvls[i])
+                wvl_dict[ib].append(wvl)
 
     return band_dict, wvl_dict
 
