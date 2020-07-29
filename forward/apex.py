@@ -971,30 +971,39 @@ class ApexSensorClass(object):
     def smear(self, res, binned=True, ext_bands=None):
         # if binned need first to unbin
         shape = res.shape
+
+        vnir_bands = np.where(ext_bands < self.N_VNIR_BINNED)[0]
+        swir_bands = np.where(ext_bands >= self.N_VNIR_BINNED)[0]
         if binned:
             # TODO: why is smearing only in VNIR?
-            vnir_bands = np.where(ext_bands < self.N_VNIR_BINNED)[0]
-            swir_bands = np.where(ext_bands >= self.N_VNIR_BINNED)[0]
             unbinned_vnir, ext_vnir_bands_unb = self.unbin(res[:, vnir_bands], ext_bands=ext_bands[vnir_bands])
 
             # there are only vnir bands
             if len(swir_bands) == 0 and len(vnir_bands) > 0:
                 res = unbinned_vnir
+
+                # switch to unbinned band defintion
                 ext_bands = ext_vnir_bands_unb
 
             # it's in the overlapping region
             elif len(swir_bands) > 0 and len(vnir_bands) > 0:
+                print('overlapping', len(vnir_bands), len(swir_bands), vnir_bands, swir_bands)
+                print('EXT_BANDS before', ext_bands)
                 res = np.concatenate([unbinned_vnir, res[:, swir_bands]], axis=1)
+
+                # switch to unbinned band definition
                 ext_bands = np.concatenate([ext_vnir_bands_unb,
                                             ext_bands[swir_bands] - self.N_VNIR_BINNED + self.N_VNIR_UNBINNED])
+                print('EXT_BANDS after', ext_bands)
 
             # there are only swir bands
             else:
                 pass
 
-        vnir_bands = np.where(ext_bands < self.N_VNIR_UNBINNED)[0]
+        unbinned_shape = res.shape
+
         if len(vnir_bands) == 0:
-            return res
+            return res, ext_bands
 
         # TODO: only vnir is smeared?
         # res = integration_time / dt * drad
@@ -1009,14 +1018,13 @@ class ApexSensorClass(object):
         
         if binned:
             # rebin vnir bands
-            print(res.shape, vnir_bands)
-            res = self.bin_bands(res, in_bands=vnir_bands, axis=1)
-            print('after', res.shape)
+            res = self.bin_bands(res, ext_bands=ext_bands, axis=1)
+
             # reunite vnir and swir
             # res = np.concatenate((vnir_res, res[:, swir_bands]), axis=1)
 
-        #if res.shape != shape:
-        #    print(res.shape, ext_bands)
+        if res.shape != shape:
+            print('before', shape, 'between', unbinned_shape, 'after', res.shape)
         
         return res
 

@@ -14,7 +14,7 @@ except ModuleNotFoundError:
     from forward import apex
 
 
-home = '/home/'
+home = '/Users/'
 
 
 def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_per_job, n_jobs):
@@ -67,7 +67,7 @@ def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_p
     # Simulate forward
     config = dict(inp_spectrum=inp_spectrum,
                   inp_wvlens=wvls.reshape(-1, 1), pad=False, part_covered=True,
-                  invert=True, snr=True, dc=True, smear=False, return_binned=False, 
+                  invert=True, snr=True, dc=True, smear=True, return_binned=False,
                   run_specs=dict(joblib=True, verbose=False, 
                                  batches_per_job=batches_per_job, n_jobs=n_jobs))
     
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     abs_res = 1
     n = 10  # n samples per nm
     # intensity_var = np.arange(0.6, 2.5, 1)
-    intensity_var = np.array([1])  # multiplicative variation of intensity
+    intensity_var = np.array([10])  # multiplicative variation of intensity
     batches_per_job = 100
     n_jobs = 10
     
