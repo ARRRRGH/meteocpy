@@ -39,13 +39,13 @@ def convolve_non_aligned(inp, weights=None, weights_per_band=None,
             j = min(inp.shape[1] - 1, i)
 
             # print((inp[..., j, :e - s] * weights[:, i, s:e]).shape)
-            conv[:, i] = (inp[:, j, :e - s] * weights[:, i, s:e]).reshape(-1)
+            conv[:, i] = np.sum(inp[:, j, :e - s] * weights[:, i, s:e])
 
     elif indices_per_band is not None:
-        px_in_band = weights[0].shape[0]
-        nr_indices = indices_per_band.shape[0]
+        px_in_band = weights_per_band[0].shape[1]
+        nr_bands = indices_per_band.shape[0]
 
-        conv = np.zeros((inp.shape[0], nr_indices, px_in_band))
+        conv = np.zeros((inp.shape[0], nr_bands, px_in_band))
 
         for band, ind in enumerate(indices_per_band):
             for i in range(px_in_band):
@@ -55,10 +55,10 @@ def convolve_non_aligned(inp, weights=None, weights_per_band=None,
                 j = min(inp.shape[1] - 1, band * px_in_band + i)
 
                 # print((inp[..., j, :e - s] * weights[:, i, s:e]).shape)
-                conv[:, band, i] = (inp[:, j, :e - s] * weights_per_band[band][:, i, s:e]).reshape(-1)
+                conv[:, band, i] = np.sum(inp[:, j, :e - s] * weights_per_band[band][:, i, s:e])
 
         # reshape such that we have a proper px dimension as in indices case
-        conv = conv.reshape((-1, nr_indices * px_in_band))
+        conv = conv.reshape((-1, nr_bands * px_in_band))
 
     return conv
 
@@ -226,9 +226,14 @@ class ApexSensorClass(object):
         #
         raise NotImplementedError
 
-    def bin_bands(self, unbinned, wvls=None, ext_bands=None, ufunc=np.add, axis=1, renorm=True):
-        if ext_bands is None:
+    def bin_bands(self, unbinned, wvls=None, ext_bands=None, in_bands=None,
+                  ufunc=np.add, axis=1, renorm=True):
+        
+        if ext_bands is None and in_bands is None:
             ext_bands = np.arange(self.DIM_BANDS_AX_UNBINNED)
+        elif in_bands is not None:
+            start_band_unbinned = self.bins.inverse[self.get('start_band', True)][0]
+            ext_bands = in_bands + start_band_unbinned
 
         # make sure bins aren't only partially covered
         ext_bands, bin_index = self.extend_ext_bands(ext_bands, return_bin_index=True)
@@ -236,17 +241,17 @@ class ApexSensorClass(object):
 
         if not type(unbinned) is list:
             # if the next index would be larger than unbinned.shape[axis] reduce till end
-            end_index = bins[bin_index[-1] + 1]
+            end_index = bins[bin_index[-1] + 1] - ext_bands[0]
             if end_index >= unbinned.shape[axis]:
                 bins = bins[bin_index] - ext_bands[0]  # shift index to local coordinate system
                 ret = ufunc.reduceat(unbinned, bins, axis=axis)
 
             # need to put a break to reducer at end, exclude the added element
             else:
-                bins = np.r_[bins[bin_index], end_index] - ext_bands[0]  # shift index to local coordinate system
-                ret = ufunc.reduceat(unbinned, bins, axis=axis)[tuple([slice(None, None)
-                                                                       if ax != axis else slice(None, -1)
-                                                                       for ax in range(len(unbinned.shape))])]
+                bins = np.r_[bins[bin_index] - ext_bands[0], end_index]
+                ret = ufunc.reduceat(unbinned, bins, axis=axis)#[tuple([slice(None, None)
+                                                               #        if ax != axis else slice(None, -1)
+                                                               #        for ax in range(len(unbinned.shape))])]
 
             return ret
 
@@ -523,7 +528,7 @@ class ApexSensorClass(object):
                 # return ext_bands in binned indices which are the bin inds
                 ext_bands = np.unique([self.bins[i] for i in ext_bands])
 
-            srfs = srfs / np.sum(srfs, axis=-1)[..., None]  # / step_size
+            #srfs = srfs / np.sum(srfs, axis=-1)[..., None]  # / step_size
             srfs = srfs.reshape(1, *srfs.shape)  # add channel dimension
 
             # get actual support per band
@@ -543,7 +548,7 @@ class ApexSensorClass(object):
             support_per_band = band_support
 
             if do_bin:
-                srfs, wvls = self.bin_bands(srfs, wvls=wvls, ext_bands=ext_bands, axis=0, renorm=True)
+                srfs, wvls = self.bin_bands(srfs, wvls=wvls, ext_bands=ext_bands, axis=0, renorm=False)
 
                 # "binning" of support
                 support_per_band = self.get_support_per_band(np.stack([lo_per_px, hi_per_px],
@@ -552,7 +557,7 @@ class ApexSensorClass(object):
                 # get bin of lowest ext_band
                 ext_bands = np.unique([self.bins[i] for i in ext_bands])
 
-            # srfs = [srf /  for srf in srfs]  # / np.sum(srf, axis=-1)[..., None] / step_size
+            #srfs = [srf / np.sum(srf, axis=-1)[..., None] for srf in srfs]  # / np.sum(srf, axis=-1)[..., None] / step_size
             srfs = [srf.reshape(1, *srf.shape) for srf in srfs]  # add channel dimension
 
             return srfs, wvls, ext_bands, support_per_band
@@ -726,6 +731,9 @@ class ApexSensorClass(object):
             end_ind_per_band = [np.clip(si + inp_spectrum.shape[-1], a_min=None, a_max=srf.shape[-1])
                                 for si, srf in zip(start_ind_per_band, srfs)]
 
+            for arr in srfs:
+                arr.setflags(write=False)
+                
             return convolve_non_aligned(inp=inp_spectrum, weights_per_band=srfs,
                                         indices_per_band=np.asarray(list(zip(start_ind_per_band, end_ind_per_band))))\
                    .reshape(-1, len(in_bands), self.DIM_X_AX)
@@ -962,6 +970,7 @@ class ApexSensorClass(object):
 
     def smear(self, res, binned=True, ext_bands=None):
         # if binned need first to unbin
+        shape = res.shape
         if binned:
             # TODO: why is smearing only in VNIR?
             vnir_bands = np.where(ext_bands < self.N_VNIR_BINNED)[0]
@@ -997,14 +1006,28 @@ class ApexSensorClass(object):
 
         # add smear to DNs
         res[:, vnir_bands] += 2 * adds
-        res = self.bin_bands(res, ext_bands=ext_bands, axis=1)
+        
+        if binned:
+            # rebin vnir bands
+            print(res.shape, vnir_bands)
+            res = self.bin_bands(res, in_bands=vnir_bands, axis=1)
+            print('after', res.shape)
+            # reunite vnir and swir
+            # res = np.concatenate((vnir_res, res[:, swir_bands]), axis=1)
+
+        #if res.shape != shape:
+        #    print(res.shape, ext_bands)
+        
         return res
 
     def srf_model(self, *args, **kwargs):
         return norm.pdf(*args, **kwargs)
 
     def unbin(self, res, ext_bands=None):
-        new_ext_bands = np.concatenate([self.bins.inverse[band] for band in ext_bands])
+        new_ext_bands = [self.bins.inverse[band] for band in ext_bands]
+        if len(new_ext_bands) == 0:
+            return None, None
+        new_ext_bands = np.concatenate(new_ext_bands)
 
         lens = [len(self.bins.inverse[band]) for band in ext_bands]
         edges = np.cumsum(lens)
