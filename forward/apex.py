@@ -1003,7 +1003,7 @@ class ApexSensorClass(object):
         unbinned_shape = res.shape
 
         if len(vnir_bands) == 0:
-            return res, ext_bands
+            return res
 
         # TODO: only vnir is smeared?
         # res = integration_time / dt * drad
@@ -1025,7 +1025,7 @@ class ApexSensorClass(object):
 
         if res.shape != shape:
             print('before', shape, 'between', unbinned_shape, 'after', res.shape)
-        
+
         return res
 
     def srf_model(self, *args, **kwargs):
