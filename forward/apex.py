@@ -55,7 +55,7 @@ def convolve_non_aligned(inp, weights=None, weights_per_band=None,
                 j = min(inp.shape[1] - 1, band * px_in_band + i)
 
                 # print((inp[..., j, :e - s] * weights[:, i, s:e]).shape)
-                conv[:, band, i] = np.sum(inp[:, j, :e - s] * weights_per_band[band][:, i, s:e])
+                conv[:, band, i] = np.sum(inp[:, j, :e - s] * weights_per_band[band][:, i, s:e], axis=-1)
 
         # reshape such that we have a proper px dimension as in indices case
         conv = conv.reshape((-1, nr_bands * px_in_band))
@@ -810,6 +810,9 @@ class ApexSensorClass(object):
             inp_spectrum = [inp_spectrum[0]] * len(inp_wvlens)
 
         # define jobs
+        # nr_jobs = max(1, len(inp_spectrum) // batches_per_job)
+        # job_inp_spectra = np.array_split(inp_spectrum, nr_jobs)
+        # job_inp_wvls = np.array_split(inp_wvlens, nr_jobs)
         job_inp_spectra = chunk_list(inp_spectrum, batches_per_job)
         job_inp_wvls = chunk_list(inp_wvlens, batches_per_job)
 
@@ -987,21 +990,18 @@ class ApexSensorClass(object):
 
             # it's in the overlapping region
             elif len(swir_bands) > 0 and len(vnir_bands) > 0:
-                print('overlapping', len(vnir_bands), len(swir_bands), vnir_bands, swir_bands)
-                print('EXT_BANDS before', ext_bands)
+
                 res = np.concatenate([unbinned_vnir, res[:, swir_bands]], axis=1)
 
                 # switch to unbinned band definition
                 ext_bands = np.concatenate([ext_vnir_bands_unb,
                                             ext_bands[swir_bands] - self.N_VNIR_BINNED + self.N_VNIR_UNBINNED])
-                print('EXT_BANDS after', ext_bands)
 
             # there are only swir bands
             else:
                 pass
 
         unbinned_shape = res.shape
-
         if len(vnir_bands) == 0:
             return res
 
