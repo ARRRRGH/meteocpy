@@ -1,16 +1,14 @@
 
-simulations/test/
+.idea/
 
-simulations/
+__pycache__/
+
+*.iml
 
 saved_apex_models/
 
-notebooks/
+simulations/
 
-*.pyc
-
-.idea/
+*.ipynb
 
 .DS_Store
-
-*.iml

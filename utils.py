@@ -5,6 +5,7 @@ from scipy.io import loadmat
 import itertools
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 
 def plot_frame(ap, simu, illu_bands, ind, channel=0, vmax=None, vmin=None, figsize=None, binned='binned'):
@@ -14,6 +15,7 @@ def plot_frame(ap, simu, illu_bands, ind, channel=0, vmax=None, vmin=None, figsi
     fig, axs = plt.subplots(1, 2, figsize=figsize)
 
     im = axs[0].matshow(simu[ind][channel], aspect='auto', vmax=vmax, vmin=vmin)
+    axs[0].yaxis.set_major_locator(ticker.MultipleLocator(1))
     axs[0].set_yticklabels([''] + wvls)
 
     divider = make_axes_locatable(axs[0])

@@ -17,14 +17,18 @@ def target_mean(ap, ext_band, inp_spectrum, inp_wvls):
     support = ap.get('srf_support_per_band')[band]
     mean_wvl = support.mean()
 
-    print(band, support, mean_wvl, inp_wvls)
     # supported_ids = np.where(np.logical_and(inp_wvlens < support[-1], inp_wvlens[0] > support[0]))
+    if mean_wvl > inp_wvls[-1] or mean_wvl < inp_wvls[0]:
+        return None
+
     return sc.interpolate.interp1d(inp_wvls, inp_spectrum)(mean_wvl)
 
 
-def create_inp_spectrum_uniform(config, model='uniform'):
+def create_inp_spectrum(config, model='multi'):
     """
     :param config:
+    :param model: multi: convert the series of monchromatic delta peaks in a 
+                  contiguous spectrum
     :return: spectrum (n_realizations, n_wvls), wvls (n_wvls, )
     """
     if model == 'uniform':
@@ -44,17 +48,16 @@ def gather_simulations(frames, illu_bands, inp_wvls):
 
     # Iterate over all bands such that band_dict[i] = [band_at_wvl1, ..., band_at_wvln]
     # and wvl_dict = [wvl1, ..., wvln]
-    for i, (ill_bands, frame) in enumerate(zip(illu_bands, frames)):
-
+    for i, (ill_bands, frame, wvl) in enumerate(zip(illu_bands, frames, inp_wvls)):
         for j, ib in enumerate(ill_bands):
 
             if ib not in band_dict:
                 band_dict[ib] = [frame[:, j, :]]
-                wvl_dict[ib] = [inp_wvls[i]]
+                wvl_dict[ib] = [wvl]
 
             else:
                 band_dict[ib].append(frame[:, j, :])
-                wvl_dict[ib].append(inp_wvls[i])
+                wvl_dict[ib].append(wvl)
 
     return band_dict, wvl_dict
 
@@ -68,7 +71,7 @@ def create_dns(frames, illu_bands, inp_wvls, model='uniform'):
     :param band:
     :return:
     """
-    band_dict, wvl_dict = gather_simulations(frames, illu_bands, inp_wvlens=inp_wvls)
+    band_dict, wvl_dict = gather_simulations(frames, illu_bands, inp_wvls=inp_wvls)
     # calculate total dns from delta peak results
     # we assume a fully
     if model == 'uniform':
