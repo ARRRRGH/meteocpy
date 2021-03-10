@@ -360,13 +360,14 @@ class ApexSensorClass(object):
 
         # if exact_wvls is supplied
         else:
-            @nb.jit(nopython=True)
+            # @nb.jit(nopython=True)
             def _iterate_range(wvls, lo, hi):
                 ranges = []
-                for i in range(len(lo)):
-                    ranges.append(exact_wvls[np.logical_and(wvls > lo[i], wvls < hi[i])])
+                for l, h in zip(lo, hi):
+                    ranges.append(wvls[np.logical_and(wvls > l, wvls < h)])
 
                 return ranges
+
             ranges = _iterate_range(exact_wvls, lo, hi)  # .astype(np.float)
             inds = None
             support_per_band_ext = None
@@ -450,6 +451,7 @@ class ApexSensorClass(object):
         :param ext_bands: only the indices in bands are considered
         :return: (srfs, wvls, ext_bands, support)
         """
+
         assert res is not None or abs_res is not None or exact_wvls is not None
         do_bin = not binned and do_bin
 
@@ -560,6 +562,8 @@ class ApexSensorClass(object):
             #srfs = [srf / np.sum(srf, axis=-1)[..., None] for srf in srfs]  # / np.sum(srf, axis=-1)[..., None] / step_size
             srfs = [srf.reshape(1, *srf.shape) for srf in srfs]  # add channel dimension
 
+            # TODO: calc norm / sum up srfs and normalize
+
             return srfs, wvls, ext_bands, support_per_band
 
     def initialize_srf_support(self, sigma, binned=True):
@@ -595,7 +599,7 @@ class ApexSensorClass(object):
         If exact_wvls is not None, SRFs are computed for each pixel for the subset of wavelengths provided falling into
         the limits of the band's srf_support_in_sigma (min/max over all px in the same band). Here the same sampling for
         all pixels in the same band is guaranteed.
-        NOTE: This is the recommended way of initializing SRFs.
+        ***NOTE: This is the recommended way of initializing SRFs.***
 
         part_covered determines what part of the input spectrum support is judged relevant for a band.
         If part_covered == False, only pixels in bands with mean cw inside inp_support are considered, else all bands that
@@ -610,16 +614,18 @@ class ApexSensorClass(object):
         exactly srf_support_in_sigma for each px can be enforced with zero_out == True.
 
 
-        :param inp_support:
+        :param inp_support: (2, ) min/max of range to consider
         :param res:
         :param abs_res:
-        :param exact_wvls:
+        :param exact_wvls: (n_batches, n_wvls)
         :param srf_support_in_sigma:
         :param part_covered:
         :param zero_out:
         :param do_bin:
         :return:
         """
+
+        # determine calc_mode
         if abs_res is not None:
             calc_mode = 'abs_res'
         elif res is not None:
@@ -627,6 +633,7 @@ class ApexSensorClass(object):
         elif exact_wvls is not None:
             calc_mode = 'exact_wvls'
 
+        # determine whether need to bin
         binned = self.is_binned
         do_bin = not binned and do_bin
 
@@ -637,7 +644,7 @@ class ApexSensorClass(object):
         support_per_band = self.get_support_per_band(srf_support)
 
         if inp_support is None:
-            inp_support = exact_wvls
+            inp_support = (np.min(exact_wvls), np.max(exact_wvls))
 
         # determine which bands are covered by inp_support
         illu_bands = self.get_illuminated_bands(inp_support, part_covered=part_covered,
@@ -645,8 +652,8 @@ class ApexSensorClass(object):
 
         # compute srf for all pixels that are in an illuminated band
         srfs, wvls, illu_bands, support_per_band = self.compute_srfs(support=srf_support, ext_bands=illu_bands, res=res,
-                                                                abs_res=abs_res, exact_wvls=exact_wvls, zero_out=zero_out,
-                                                                binned=binned, do_bin=do_bin)
+                                                                     abs_res=abs_res, exact_wvls=exact_wvls,
+                                                                     zero_out=zero_out, binned=binned, do_bin=do_bin)
 
         # save model to correct binned/unbinned
         bkey = self.is_binned_as_str(binned or do_bin)

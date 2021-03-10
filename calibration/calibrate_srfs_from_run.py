@@ -25,12 +25,17 @@ with open(os.path.join(simu_path, 'band_indices'), 'rb') as f:
 with open(os.path.join(simu_path, 'simulation_config'), 'rb') as f:
     config = pkl.load(f)
 
-with open(os.path.join('/Users/jim/meteocpy', 'saved_apex_models', 'apex_700_800'), 'rb') as f:
+with open(os.path.join('/Users/jim/meteocpy', 'saved_apex_models', 'apex_400_2000'), 'rb') as f:
     ap = pkl.load(f)
 
 
 # gather_simulations
-band_dict, wvl_dict = gather_simulations(frames, illu_bands, config['inp_wvlens'].reshape(-1))
+wvls = config['inp_wvlens'].reshape(-1)
+if len(wvls) != len(frames):
+    raise ValueError('This script assumes the simulation is run in mono=True, i.e. there is one frame per wavelength.'
+                     'This isn\'t the case with the provided simulation.')
+
+band_dict, wvl_dict = gather_simulations(frames, illu_bands, wvls)
 
 
 # define srf model
@@ -54,7 +59,7 @@ srf_model = gaussian_w_off
 channel = -1
 plot_xdir_px = [250, 500, 750]
 
-for band in list(band_dict.keys())[10:11]:
+for band in list(band_dict.keys())[100:101]:
 
     # run in a loop to reduce number of simultaneously fitted params
     # -> circumvent scipy's limitation on 1000 params

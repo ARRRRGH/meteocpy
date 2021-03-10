@@ -14,7 +14,7 @@ except ModuleNotFoundError:
     from forward import apex
 
 
-home = '/home/'
+home = '/Users/'
 
 
 def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_per_job, n_jobs, run_mono=True):
@@ -32,7 +32,7 @@ def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_p
     inp_spectrum = CubicSpline(wvls, inp_spectrum)(wvls_)
 
     # create input_spectrum, dirac peak for all wvls in calibr at intensities in intensity_var
-    inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 1e5
+    inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 5e6
     if run_mono:
         wvls = wvls_.reshape(-1, 1)
         inp_spectrum = inp_spectrum.reshape(len(inp_spectrum), len(intensity_var), 1)
@@ -93,8 +93,8 @@ if __name__ == '__main__':
     
     ##### SETTINGS ################################################################
     simulation_name = 'test'
-    recompute = False
-    rang = [400, 3000]
+    recompute = True
+    rang = [400, 2000]
     abs_res = 1
     n = 3  # n samples per nm
     # intensity_var = np.arange(0.6, 2.5, 1)
@@ -102,7 +102,7 @@ if __name__ == '__main__':
     # intensity_var = np.array([1])
     batches_per_job = 100
     n_jobs = 10
-    run_mono = False
+    run_mono = True
     
     here_path = os.path.dirname(os.path.dirname(__file__))
     save_path = os.path.join(here_path, 'saved_apex_models/apex_%d_%d' % (rang[0], rang[1]))

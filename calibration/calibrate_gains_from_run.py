@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 
 from calibration.utils_calibrate import target_mean, create_inp_spectrum, create_dns
 
-simu_path = '/home/jim/meteocpy/simulations/test'
+simu_path = '/Users/jim/meteocpy/simulations/test'
 target = target_mean
-is_mono = False 
+is_mono = False
 plot = False
 
 
@@ -24,7 +24,7 @@ with open(os.path.join(simu_path, 'band_indices'), 'rb') as f:
 with open(os.path.join(simu_path, 'simulation_config'), 'rb') as f:
     config = pkl.load(f)
 
-with open(os.path.join('/home/jim/meteocpy', 'saved_apex_models', 'apex_400_3000'), 'rb') as f:
+with open(os.path.join('/Users/jim/meteocpy', 'saved_apex_models', 'apex_400_2000'), 'rb') as f:
     ap = pkl.load(f)
 
 
