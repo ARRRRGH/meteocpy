@@ -632,6 +632,8 @@ class ApexSensorClass(object):
             calc_mode = 'res'
         elif exact_wvls is not None:
             calc_mode = 'exact_wvls'
+        else:
+            raise NotImplementedError('You must provide abs_res, res or exact_wvls.')
 
         # determine whether need to bin
         binned = self.is_binned
@@ -769,6 +771,8 @@ class ApexSensorClass(object):
         binned = run_with_binned
 
         inp_wvlens = np.atleast_2d(inp_wvlens)
+        inp_spectrum = np.atleast_2d(inp_spectrum)
+
         # reshape input spectrum
         if len(inp_spectrum.shape) == 2:
             # we assume (batch, wvl)
@@ -1060,13 +1064,51 @@ class ApexSensorClass(object):
 #     return ApexSensorClass(*args, **kwargs, **load_params(calibration_path, meta_path))
 
 
-def load_apex(binned_vnir_swir=None, unbinned_vnir_swir=None, unbinned_vnir=None, binned_meta=None, unbinned_meta=None,
+def load_apex(binned_vnir_swir=None, unbinned_vnir=None, binned_meta=None, unbinned_meta=None,  unbinned_vnir_swir=None,
               swir=None, unbinned_complete=None, *args, **kwargs):
-    # load binned vnir and swir
+    """
+    Load the apex parametrization as configured in the mat files that I was given. SRF parameters (CW and FWHM) are called parameters,
+    all other sensor variables will be called meta variables in the following.
+
+    The VNIR parametrization can be passed in binned or unbinned format. The SWIR parameters in the mat files are always
+    in a single binned vector toghether with binned VNIR. So the present implementation covers
+
+    unbinned:
+    --------
+    supply binned_vnir_swir (for the swir part) and unbinned_vnir (for the vnir part)
+
+    binned:
+    -------
+    supply binned_vnir_swir (for both vnir and swir) and make sure unbinned_vnir is None
+
+    In both cases a meta variable directory with must be supplied (see directory for an example). The user is free to decide if
+    the meta files refer to binned or unbinned bands. However, you *MUST* make sure to have binned (do_bin=True) bands
+    after initialization when supplying binned meta files.
+
+    The loading can be adapted. It must return an ApexSensorClass object.
+
+    NOTE
+    -----
+    * Check that the meta file mode (binned/unbinnedd) correspoonds to the SRF mode after initialization (binned/unbinned)
+    * Only the unbinned case with binned meta files was tested thoroughly.
+
+    :param binned_vnir_swir:
+    :param unbinned_vnir_swir:
+    :param unbinned_vnir:
+    :param binned_meta:
+    :param unbinned_meta:
+    :param swir:
+    :param unbinned_complete:
+    :param args:
+    :param kwargs:
+    :return:
+    """
+
+    # load BINNED vnir and swir
     if binned_vnir_swir is not None and unbinned_vnir is None:
         return ApexSensorClass(*args, **kwargs, **load_params(calibration_path=binned_vnir_swir,
                                                               meta_path=binned_meta))
-    # load unbinned vnir and swir, merge
+    # load UNBINNED vnir and swir, merge
     elif binned_vnir_swir is not None and unbinned_vnir is not None:
 
         meta = unbinned_meta if unbinned_meta is not None else binned_meta

@@ -6,7 +6,8 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import BarycentricInterpolator, KroghInterpolator, CubicSpline
-import scipy.signal as sgn
+
+from os.path import join as pjoin
 
 try:
     from meteocpy.forward import apex
@@ -14,16 +15,14 @@ except ModuleNotFoundError:
     from forward import apex
 
 
-home = '/Users/'
+def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per_job, n_jobs,
+                   run_mono=True):
 
-
-def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_per_job, n_jobs, run_mono=True):
-    ##### LOAD INPUT SPECTRUM #####################################################
-    calibr = pd.read_csv(home+'jim/meteoc/data/OGSE_Large sphere radiance.csv')
+    # #### LOAD INPUT SPECTRUM #####################################################
+    calibr = pd.read_csv(spectrum_path)
     calibr = calibr.iloc[:-1, :3].iloc[np.where(np.logical_and(calibr.iloc[:, 0] > rang[0],
                                                                calibr.iloc[:, 0] < rang[-1]))]#[:30]
-    
-    
+
     inp_spectrum = calibr.iloc[:, 1].values
     wvls = calibr.iloc[:, 0].values
     
@@ -90,9 +89,18 @@ def run_experiment(simulation_name, recompute, rang, n, intensity_var, batches_p
 
 
 if __name__ == '__main__':
-    
+    """
+    This script simulates the APEX sensor under the provided METEOC spectrum (mono or multi). The spectrum can be varied
+    with simple multiplicative factors. It is saved to simulations/{simulation_name}. 
+    """
+
+
     ##### SETTINGS ################################################################
     simulation_name = 'test'
+
+    home = '/Users/jim/meteoc'
+    spectrum_path = pjoin(home, 'params/meteoc_spectrum/OGSE_Large sphere radiance.csv')
+
     recompute = True
     rang = [400, 2000]
     abs_res = 1
