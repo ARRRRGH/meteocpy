@@ -312,8 +312,8 @@ class ApexSensorClass(object):
                                      'resolution %f.') % (inp_wvl[1] - inp_wvl[0], self.get('abs_res', binned)))
 
             # Check support of input is entirely covered by precalculated srfs
-            if inp_wvl[0] < self.get('initialized_support', binned)[0] \
-                    or inp_wvl[-1] > self.get('initialized_support', binned)[-1]:
+            if np.any(inp_wvl[0] < self.get('initialized_support', binned)[0]) \
+                    or np.any(inp_wvl[-1] > self.get('initialized_support', binned)[-1]):
                 raise Exception('You calculated SRFs for (%f, %f). The input spectrum is out of bounds.'
                                 % (self.get('initialized_support', binned)[0],
                                    self.get('initialized_support', binned)[-1]))
