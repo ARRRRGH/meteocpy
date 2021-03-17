@@ -15,13 +15,20 @@ except ModuleNotFoundError:
     from forward import apex
 
 
-def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per_job, n_jobs,
+def run_experiment(out_path, spectrum_path, recompute, rang, n, intensity_var, batches_per_job, n_jobs,
                    run_mono=True):
 
     # #### LOAD INPUT SPECTRUM #####################################################
+    # this section neeeds probably to change if you use a different file !!
+
     calibr = pd.read_csv(spectrum_path)
     calibr = calibr.iloc[:-1, :3].iloc[np.where(np.logical_and(calibr.iloc[:, 0] > rang[0],
                                                                calibr.iloc[:, 0] < rang[-1]))]#[:30]
+
+    if len(calibr) < 2:
+        raise Exception('The supplied APEX sensor range (%d - %d) and the spectral range of the supplied '
+                        'input spectrum (%d - %d) do not overlap.' % (rang[0], rang[-1],
+                                                                      calibr[0, 0], calibr[-1, 0]))
 
     inp_spectrum = calibr.iloc[:, 1].values
     wvls = calibr.iloc[:, 0].values
@@ -31,6 +38,7 @@ def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per
     inp_spectrum = CubicSpline(wvls, inp_spectrum)(wvls_)
 
     # create input_spectrum, dirac peak for all wvls in calibr at intensities in intensity_var
+    # TODO: check physical variables
     inp_spectrum = np.stack([inp_spectrum * var for var in intensity_var], axis=1) * 5e6
     if run_mono:
         wvls = wvls_.reshape(-1, 1)
@@ -39,7 +47,9 @@ def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per
         wvls = wvls_[None, :]
         inp_spectrum = inp_spectrum.transpose()[None, ...]
 
-    print(inp_spectrum.shape, wvls.shape)
+    print('***** SIMULATION \n',
+          '***** Input shape %s \n' % str(inp_spectrum.shape),
+          '***** Input support shape %s \n' % str(wvls.shape))
     
 
 
@@ -47,9 +57,9 @@ def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per
 
     ##### DEFINE APEX INSTANCE ###################################################
     if not os.path.exists(save_path) or recompute:
-        ap = apex.load_apex(unbinned_vnir=home+'jim/meteoc/params/unbinned', 
-                            binned_vnir_swir=home+'jim/meteoc/params/binned',
-                            binned_meta=home+'jim/meteoc/params/binned_meta', 
+        ap = apex.load_apex(unbinned_vnir=pjoin(home, 'params/unbinned'),
+                            binned_vnir_swir=pjoin(home, 'params/binned'),
+                            binned_meta=pjoin(home, 'params/binned_meta'),
                             vnir_it=27000, swir_it=15000)
     
         # ap.initialize_srfs(rang, abs_res=abs_res, srf_support_in_sigma=3, zero_out=True, do_bin=True)
@@ -90,8 +100,9 @@ def run_experiment(spectrum_path, recompute, rang, n, intensity_var, batches_per
 
 if __name__ == '__main__':
     """
-    This script simulates the APEX sensor under the provided METEOC spectrum (mono or multi). The spectrum can be varied
-    with simple multiplicative factors. It is saved to simulations/{simulation_name}. 
+    This script simulates the APEX sensor under the provided STARS spectrum (mono or multi). The spectrum can be varied
+    with simple multiplicative factors. It is saved to simulations/{simulation_name}. The calculated APEX model is saved
+    to saved_apex_models.
     """
 
 
@@ -99,17 +110,16 @@ if __name__ == '__main__':
     simulation_name = 'test'
 
     home = '/Users/jim/meteoc'
-    spectrum_path = pjoin(home, 'params/meteoc_spectrum/OGSE_Large sphere radiance.csv')
+    spectrum_path = pjoin(home, 'params/meteoc_spectrum/OGSE_Large_sphere_radiance.csv')
+    recompute = False
+    rang = [700, 1300]
 
-    recompute = True
-    rang = [400, 2000]
-    abs_res = 1
     n = 3  # n samples per nm
     # intensity_var = np.arange(0.6, 2.5, 1)
     intensity_var = np.array([0.001, 0.2, 0.5, 0.7, 1, 2, 3])  # multiplicative variation of intensity
     # intensity_var = np.array([1])
     batches_per_job = 100
-    n_jobs = 10
+    n_jobs = 4
     run_mono = True
     
     here_path = os.path.dirname(os.path.dirname(__file__))
@@ -118,7 +128,7 @@ if __name__ == '__main__':
     out_path = os.path.join(here_path, 'simulations', simulation_name)
     os.makedirs(out_path, exist_ok=True)
     
-    run_experiment(simulation_name, recompute, rang, n, intensity_var, 
+    run_experiment(out_path, spectrum_path, recompute, rang, n, intensity_var,
                    batches_per_job, n_jobs, run_mono=run_mono)
 
     
