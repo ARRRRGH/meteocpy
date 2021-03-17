@@ -740,11 +740,13 @@ class ApexSensorClass(object):
             end_ind_per_band = [np.clip(si + inp_spectrum.shape[-1], a_min=None, a_max=srf.shape[-1])
                                 for si, srf in zip(start_ind_per_band, srfs)]
 
+            indices_per_band = np.array(list(zip(start_ind_per_band, end_ind_per_band))).astype(np.int)
+
             for arr in srfs:
                 arr.setflags(write=False)
-                
+
             return convolve_non_aligned(inp=inp_spectrum, weights_per_band=srfs,
-                                        indices_per_band=np.asarray(list(zip(start_ind_per_band, end_ind_per_band))))\
+                                        indices_per_band=indices_per_band)\
                    .reshape(-1, len(in_bands), self.DIM_X_AX)
 
     # @profile
@@ -770,25 +772,11 @@ class ApexSensorClass(object):
         """
         binned = run_with_binned
 
-        inp_wvlens = np.atleast_2d(inp_wvlens)
-        inp_spectrum = np.atleast_2d(inp_spectrum)
+        if not hasattr(inp_wvlens[0], '__len__'):
+            inp_wvlens = np.atleast_2d(inp_wvlens)
 
-        # reshape input spectrum
-        if len(inp_spectrum.shape) == 2:
-            # we assume (batch, wvl)
-            inp_spectrum = inp_spectrum[:, None, None, ...]
-        elif len(inp_spectrum.shape) == 3:
-            # we assume (batch, channel, wvl)
-            inp_spectrum = inp_spectrum[:, :, None, ...]
-        elif len(inp_spectrum.shape) == 4:
-            # we assume (batch, channel, pix, wvl)
-            pass
-        elif len(inp_spectrum.shape) == 5:
-            # we assume (batch, channel, band, xtrack, wvl)
-            inp_spectrum = inp_spectrum.reshape(inp_spectrum.shape[0], inp_spectrum.shape[1], -1,
-                                                inp_spectrum.shape[-1])
-        else:
-            raise Exception('Input spectrum has wrong shape.')
+        if not hasattr(inp_spectrum[0], '__len__'):
+            inp_spectrum = np.atleast_2d(inp_spectrum)
 
         if self.get('res', binned) is not None:
             warnings.warn('WARNING: calculates convolution at different resolutions.')
@@ -797,7 +785,7 @@ class ApexSensorClass(object):
             raise Exception('Unbinned params are not available.')
 
         assert self.check_srfs_initialized(binned=binned)
-        assert self.check_inp_spectrum_consistency(inp_spectrum, inp_wvlens, binned=binned)
+        # assert self.check_inp_spectrum_consistency(inp_spectrum, inp_wvlens, binned=binned)
 
         # Determine how many batches per job and prepare run_specs
         if run_specs is None:
@@ -846,6 +834,26 @@ class ApexSensorClass(object):
 
         return res, illu_bands
 
+    def _reshape_inp_spectrum(self, inp_spectrum):
+        # reshape input spectrum
+        if len(inp_spectrum.shape) == 1:
+            # we assume (batch, wvl)
+            inp_spectrum = inp_spectrum[None, None, ...]
+        elif len(inp_spectrum.shape) == 2:
+            # we assume (batch, channel, wvl)
+            inp_spectrum = inp_spectrum[:, None, ...]
+        elif len(inp_spectrum.shape) == 4:
+            # we assume (batch, channel, pix, wvl)
+            pass
+        elif len(inp_spectrum.shape) == 5:
+            # we assume (batch, channel, band, xtrack, wvl)
+            inp_spectrum = inp_spectrum.reshape(inp_spectrum.shape[0], -1,
+                                                inp_spectrum.shape[-1])
+        else:
+            raise Exception('Input spectrum has wrong shape.')
+
+        return inp_spectrum
+
     # @profile
     def _forward(self, inp_spectrum, inp_wvlens, binned, part_covered=True, tol=0.5, pad=False, ng4=False, invert=True,
                  snr=True, dc=True, smear=True, return_binned=False, run_specs={}, conv_mode='numba', *args, **kwargs):
@@ -866,12 +874,16 @@ class ApexSensorClass(object):
         ext_illu_bands_per_batch = [self.shift_bands_from_local(in_illu_bands, binned=binned)
                                     for in_illu_bands in in_illu_bands_per_batch]
 
+        # reshape inp_spectrum to canonical form
+        inp_spectrum = [self._reshape_inp_spectrum(inp_s) for inp_s in inp_spectrum]
+
         # ## 1 CONVOLUTION #############################################################################################
         # convolve all illuminated bands, iterate over batches
         jobs = []
         for i, in_illu_bands in enumerate(in_illu_bands_per_batch):
             # inp_wvl = inp_wvlens[i] if len(inp_wvlens) > 1 else inp_wvlens[0]
             inp_wvl = inp_wvlens[i]
+
             jobs.append(partial(self.convolve_srfs, inp_spectrum=inp_spectrum[i], inp_wvlens=inp_wvl,
                                 in_bands=in_illu_bands, tol=tol, binned=binned, conv_mode=conv_mode))
 
