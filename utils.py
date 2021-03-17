@@ -217,9 +217,13 @@ class BiDict(dict):
         super().__delitem__(key)
 
 
+# def chunk_list(it, size):
+#     it = iter(it)
+#     return list(iter(lambda: tuple(itertools.islice(it, size)), ()))
+
 def chunk_list(it, size):
-    it = iter(it)
-    return list(iter(lambda: tuple(itertools.islice(it, size)), ()))
+    x = [it[i:i + size] for i in range(0, len(it), size)]
+    return x
 
 
 class _AttributeDict(dict):
